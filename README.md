@@ -2,7 +2,7 @@
 
 **Version 0.0.1** · An R/Shiny application for pooled CRISPR screen analysis.
 
-ATOP-SCREEN combines count normalization, adaptive Top-N gene scoring, permutation testing, pathway enrichment and publication-ready plots in one interface. MAGeCK RRA and MLE are also supported when MAGeCK is installed.
+ATOP-SCREEN is an integrated graphical user interface (GUI) platform for CRISPR screen analysis based on the Adaptive Top-N aggregation algorithm. It integrates data processing, permutation-based significance testing, and interactive visualization within a unified workflow, linking gene-level scores to sgRNA-level diagnostic evidence and pathway-level interpretation through Gene Set Enrichment Analysis (GSEA).
 
 ## Quick start
 
