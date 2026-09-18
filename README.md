@@ -1,8 +1,8 @@
 # ATOP-SCREEN
 
-**Version 0.0.1** · An R/Shiny application for CRISPR screen analysis.
+**Version 0.0.1** · An R/Shiny application for pooled screen analysis.
 
-ATOP-SCREEN is an integrated graphical user interface (GUI) platform for CRISPR screen analysis based on the Adaptive Top-N aggregation algorithm. It integrates data processing, permutation-based significance testing, and interactive visualization within a unified workflow, linking gene-level scores to sgRNA-level diagnostic evidence and pathway-level interpretation through Gene Set Enrichment Analysis (GSEA).
+ATOP-SCREEN is an integrated graphical user interface (GUI) platform for pooled screen analysis based on the Adaptive Top-N aggregation algorithm. It integrates data processing, permutation-based significance testing, and interactive visualization within a unified workflow, linking gene-level scores to guide-level diagnostic evidence and pathway-level interpretation through Gene Set Enrichment Analysis (GSEA).
 
 ## Quick start
 
