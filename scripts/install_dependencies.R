@@ -17,27 +17,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
-# --- CRISPR Screen Analysis System - Dependency Auto-Installer ---
-
 cat("CRISPR Screen Analysis System - Dependency Installer\n")
 cat("===========================================\n\n")
 
-# --- Zero-Config Bootstrap ---
-# 1. Set CRAN Mirror if not set (Prevents interactive hang)
-if (is.null(getOption("repos")) || getOption("repos")["CRAN"] == "@CRAN@") {
+if (is.null(getOption("repos")) || is.na(getOption("repos")["CRAN"]) || getOption("repos")["CRAN"] == "@CRAN@") {
     cat("  [BOOT] Setting default CRAN mirror (cloud.r-project.org)...\n")
     r <- getOption("repos")
     r["CRAN"] <- "https://cloud.r-project.org/"
     options(repos = r)
 }
 
-# 2. Helper for silent package checking
 is_installed <- function(pkg) {
     return(requireNamespace(pkg, quietly = TRUE))
 }
 
-# Check R Version
 r_version <- R.Version()$version.string
 cat("Current R Version:", r_version, "\n")
 
@@ -47,7 +40,6 @@ if (as.numeric(R.Version()$major) < 4) {
 
 cat("R version check passed\n\n")
 
-# --- Helper Functions ---
 log_info <- function(msg) cat(sprintf("  [INFO] %s\n", msg))
 log_ok <- function(pkg) cat(sprintf("  [OK] %s\n", pkg))
 log_miss <- function(pkg) cat(sprintf("  [..] %s missing. Installing...\n", pkg))
@@ -91,56 +83,46 @@ install_if_missing <- function(packages, install_func = install.packages, desc =
     return(success_count == total_count)
 }
 
-# --- Step 1: Basic CRAN Packages ---
 cat("Step 1: Basic CRAN Packages\n")
 
 cran_packages <- c(
-    # === Shiny App Framework ===
-    "shiny", # Web App Framework
-    "shinyjs", # JavaScript Interaction
 
-    # === Data Processing Core ===
-    "readxl", # Excel File Reading
-    "dplyr", # Data Manipulation Grammar
-    "tibble", # Modern Data Frames
-    "rlang", # Metaprogramming Support
-    "tidyr", # Data Tidy
-    "stringr", # String Processing
+    "shiny",
+    "shinyjs",
 
-    # === User Interface ===
-    "DT", # Interactive Data Tables
+    "readxl",
+    "dplyr",
+    "tibble",
+    "rlang",
+    "tidyr",
+    "stringr",
 
-    # === Scientific Plotting ===
-    "ggplot2", # Plotting Grammar
-    "ggpubr", # Publication Ready Plots
-    "ggpmisc", # Plot Statistics
-    "ggnewscale", # Multiple Color Scales
-    "patchwork", # Plot Layouts
-    "RColorBrewer", # Color Palettes
-    "ggrepel", # Text Repulsion
-    "ggpp", # Grammar Extensions
+    "DT",
 
-    # === High Performance Computing ===
-    "parallel", # Parallel Computing
-    "data.table", # Fast Data Manipulation
+    "ggplot2",
+    "svglite",
+    "ggpubr",
+    "ggnewscale",
+    "patchwork",
+    "RColorBrewer",
+    "ggrepel",
+    "ggpp",
 
-    # === C++ Interface ===
-    "Rcpp", # R-C++ Interface
-    "RcppParallel", # Parallel C++ Computing
+    "parallel",
+    "data.table",
 
-    # === File System ===
-    "zip", # Zip File Handling
+    "Rcpp",
 
-    # === Async Processing ===
-    "later" # Deferred Execution
+    "zip",
+
+    "processx",
+    "later"
 )
 
 cran_success <- install_if_missing(cran_packages, desc = "CRAN Package")
 
-# --- Step 2: Bioconductor Packages ---
 cat("Step 2: Bioconductor Packages\n")
 
-# Robust BiocManager Bootstrap
 if (!is_installed("BiocManager")) {
     log_miss("BiocManager")
     install.packages("BiocManager")
@@ -152,8 +134,8 @@ if (!is_installed("BiocManager")) {
 }
 
 bioc_packages <- c(
-    "clusterProfiler", # Gene Enrichment Analysis
-    "enrichplot" # Enrichment Visualization
+    "clusterProfiler",
+    "enrichplot"
 )
 
 bioc_install_func <- function(pkg, ...) {
@@ -162,11 +144,10 @@ bioc_install_func <- function(pkg, ...) {
 
 bioc_success <- install_if_missing(bioc_packages, bioc_install_func, "Bioconductor Package")
 
-# --- Step 3: Optional Enhanced Packages ---
 cat("Step 3: Optional Enhanced Packages\n")
 
 optional_packages <- c(
-    "GseaVis" # Advanced GSEA Visualization
+    "GseaVis"
 )
 
 optional_success <- TRUE
@@ -194,7 +175,6 @@ for (pkg in optional_packages) {
 }
 cat("\n")
 
-# --- Step 4: Validate Critical Components ---
 cat("Step 4: Validate Critical Components\n")
 
 critical_tests <- list(
@@ -217,14 +197,11 @@ for (test_name in names(critical_tests)) {
     }
 }
 
-# --- Step 5: System Environment Check ---
 cat("\nStep 5: System Environment Check\n")
 
-# Detect CPU Cores
 n_cores <- parallel::detectCores()
 cat("CPU Cores:", n_cores, "\n")
 
-# Detect Memory (Approx)
 if (Sys.info()["sysname"] == "Windows") {
     memory_info <- "Requires extra tool to detect"
 } else if (Sys.info()["sysname"] == "Darwin") {
@@ -240,7 +217,6 @@ if (Sys.info()["sysname"] == "Windows") {
 }
 cat("System Memory:", memory_info, "\n")
 
-# Detect C++ Compiler
 cpp_available <- tryCatch(
     {
         system("R CMD config CXX", intern = TRUE)
@@ -257,7 +233,6 @@ if (cpp_available) {
     cat("C++ Compiler: Not Available (Will use R engine)\n")
 }
 
-# --- Installation Summary ---
 cat("\nInstallation Summary\n")
 cat("====================\n")
 

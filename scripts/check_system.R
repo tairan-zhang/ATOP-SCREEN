@@ -17,25 +17,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
-# --- CRISPR Screen Analysis System - Quick System Check Script ---
-
 cat("CRISPR Screen Analysis System - System Check\n")
 cat("===============================\n\n")
 
-# Basic Environment Check
 cat("Basic Environment Check:\n")
 cat("R Version:", R.Version()$version.string, "\n")
 cat("Platform:", R.Version()$platform, "\n")
 cat("OS:", Sys.info()["sysname"], "\n\n")
 
-# Critical Package Check
 cat("Critical Package Check:\n")
 critical_packages <- c(
     "shiny", "shinyjs", "readxl", "dplyr", "tidyr", "stringr", "DT",
-    "ggplot2", "ggpubr", "ggpmisc", "ggnewscale", "patchwork", "RColorBrewer",
+    "ggplot2", "ggpubr", "ggnewscale", "patchwork", "RColorBrewer",
     "ggrepel", "ggpp", "enrichplot", "clusterProfiler",
-    "data.table", "parallel", "zip", "later", "Rcpp", "RcppParallel"
+    "data.table", "parallel", "zip", "later", "processx", "Rcpp"
 )
 
 all_ok <- TRUE
@@ -48,7 +43,6 @@ for (pkg in critical_packages) {
 cat("\nSystem Resources:\n")
 cat("CPU Cores:", parallel::detectCores(), "\n")
 
-# File Check
 cat("\nProject File Check:\n")
 required_files <- c(
     "app.R", "src/cpp_permutation_engine.cpp",
@@ -62,14 +56,13 @@ for (file in required_files) {
     if (status == "[MISSING]") files_ok <- FALSE
 }
 
-# Summary
 cat("\nCheck Summary:\n")
 if (all_ok && files_ok) {
     cat("System ready, you can run source('app.R')\n")
 } else {
     cat("System NOT ready:\n")
-    if (!all_ok) cat("  - Please run source('install_dependencies.R')\n")
+    if (!all_ok) cat("  - Please run source('scripts/install_dependencies.R')\n")
     if (!files_ok) cat("  - Please check project file integrity\n")
 }
 
-cat("\nFor detailed installation guide, please check INSTALLATION_GUIDE.md\n")
+cat("\nFor detailed installation guide, please check README.md\n")

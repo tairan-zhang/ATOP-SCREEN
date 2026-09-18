@@ -7,7 +7,6 @@ clusterProfiler 4.14.6
 shinyjs 2.1.0
 ggplot2 3.5.2
 ggpubr 0.6.0
-ggpmisc 0.6.1
 ggnewscale 0.5.1
 stringr 1.5.1
 enrichplot 1.26.6
@@ -20,5 +19,6 @@ ggrepel 0.9.6
 ggpp 0.5.8-1
 later 1.4.2
 Rcpp 1.0.14
-RcppParallel 5.1.10
 GseaVis
+processx
+svglite

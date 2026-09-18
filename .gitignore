@@ -47,3 +47,11 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Generated graphics and local build artifacts
+Rplots.pdf
+.DS_Store
+*.o
+*.so
+*.dll
+*.dylib

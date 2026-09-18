@@ -17,22 +17,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
-# server_functions.R
-# Shiny Server Logic Support Functions Collection
-
-# --- Color Validation Function ---
 is_valid_hex_or_name <- function(color_string) {
   if (is.null(color_string) || length(color_string) != 1 || is.na(color_string) || !is.character(color_string)) {
     return(FALSE)
   }
 
-  # Check if it is a valid hex color
   if (grepl("^#[0-9A-Fa-f]{6}$", color_string)) {
     return(TRUE)
   }
 
-  # Check if it is a valid color name
   tryCatch(
     {
       col2rgb(color_string)
@@ -44,63 +37,105 @@ is_valid_hex_or_name <- function(color_string) {
   )
 }
 
-# --- UI Rendering Functions ---
+show_inline_message <- function(ui, type = "message", ..., session = shiny::getDefaultReactiveDomain()) {
+  session$sendCustomMessage("inline-message", list(text = as.character(ui), type = type))
+}
 
-# Render Data Tables UI
-render_data_proc_tables_ui <- function(results) {
-  # Determine context
-  tool <- results$params$analysis_tool
-  if (is.null(tool)) tool <- "ATOP" # Default
+upload_input <- function(id, title, description, accept) {
+  div(class = "upload-zone",
+    icon("upload", class = "upload-icon"),
+    tags$strong(title), p(description),
+    fileInput(id, label = NULL, accept = accept, buttonLabel = "Choose file", placeholder = ""))
+}
 
-  is_mageck <- grepl("MAGeCK", tool, ignore.case = TRUE)
+panel_heading <- function(title, description = NULL, eyebrow = NULL) {
+  div(class = "panel-heading-block",
+    h2(title), if (!is.null(description)) p(description, class = "panel-description"))
+}
 
-  # For MAGeCK: Show raw output
-  if (is_mageck && !is.null(results$raw_mageck_gene_summary)) {
-    prefix <- ifelse(grepl("MLE", tool), "mle", "rra")
+empty_state <- function(title, description) {
+  div(class = "section-box empty-state", panel_heading(title, description, "GET STARTED"))
+}
 
-    tagList(
-      h3(paste0("MAGeCK Gene Summary (", tool, ")")),
-      p("Original MAGeCK output - columns preserved as-is", class = "text-muted"),
-      DTOutput("gene_summary_table"),
-      downloadButton("download_gene_summary", paste0("Download ", prefix, ".gene_summary (.csv)")),
-      tags$hr(),
-      h3(paste0("MAGeCK sgRNA Summary (", tool, ")")),
-      p("Original MAGeCK output - columns preserved as-is", class = "text-muted"),
-      DTOutput("sg_data_table"),
-      downloadButton("download_sg_data", paste0("Download ", prefix, ".sgrna_summary (.csv)"))
-    )
+register_plot_preview <- function(input, output, session, prefix, output_id, plot, width, height) {
+  defaults <- list(width = width, height = height, dpi = 300)
+  dimensions <- reactiveVal(defaults)
+  observeEvent(input[[paste0(prefix, "_apply_preview")]], {
+    req(input[[paste0(prefix, "_apply_preview")]] > 0)
+    values <- list(width = input[[paste0(prefix, "_download_width")]],
+      height = input[[paste0(prefix, "_download_height")]],
+      dpi = input[[paste0(prefix, "_download_dpi")]])
+    valid <- all(vapply(values, function(value) length(value) == 1L && is.finite(value), logical(1)))
+    if (!valid || values$width < 3 || values$width > 40 || values$height < 3 || values$height > 40 || values$dpi < 72 || values$dpi > 600) {
+      show_inline_message("Use dimensions from 3 to 40 cm and a DPI from 72 to 600.", type = "error", session = session)
+      return()
+    }
+    dimensions(values)
+  }, ignoreInit = TRUE)
+  output[[output_id]] <- renderImage({
+    req(plot())
+    size <- dimensions()
+    file <- tempfile(fileext = ".png")
+    ggplot2::ggsave(file, plot = plot(), width = size$width, height = size$height,
+      units = "cm", dpi = size$dpi, bg = "white")
+    list(src = file, contentType = "image/png", width = round(size$width / 2.54 * 96),
+      height = round(size$height / 2.54 * 96), alt = "Plot preview")
+  }, deleteFile = TRUE)
+  output[[paste0(prefix, "_preview_dimensions")]] <- renderText({
+    size <- dimensions()
+    sprintf("Applied: %g × %g cm · %g DPI", size$width, size$height, size$dpi)
+  })
+  dimensions
+}
+
+plot_preview <- function(output_id, ready_id, height) {
+  tagList(
+    conditionalPanel(paste0("!output.", ready_id),
+      div(class = "plot-placeholder", h3("Ready to create your plot"), p("Adjust the settings, then select Generate Plot."))),
+    conditionalPanel(paste0("output.", ready_id),
+      div(class = "plot-preview-viewport", imageOutput(output_id, height = "auto", width = "100%"))))
+}
+
+settings_group <- function(title, ..., expanded = FALSE) {
+  tags$details(class = "settings-group", open = if (expanded) NA else NULL,
+    tags$summary(title), div(class = "settings-group-content", ...))
+}
+
+navigate_workspace <- function(session, page) {
+  if (page %in% c("sgRNA Results", "Gene Results", "Pathway Results")) {
+    updateTabsetPanel(session, "workspace_area", selected = "results")
+    updateTabsetPanel(session, "result_level", selected = switch(page,
+      "sgRNA Results" = "sgrna", "Gene Results" = "gene", "Pathway Results" = "pathway"))
+  } else if (page == "GSEA Analysis Results") {
+    updateTabsetPanel(session, "workspace_area", selected = "analysis")
+    updateTabsetPanel(session, "analysis_section", selected = "gsea")
   } else {
-    # ATOP: Show two main tables plus filtered genes table
-    tagList(
-      h3("sgRNA Level Data"),
-      p("Includes diff_score, rankings, and deltaLFC per replicate", class = "text-muted"),
-      DTOutput("sg_data_table"),
-      downloadButton("download_sg_data", "Download sgRNA Data (.csv)"),
-      tags$hr(),
-      h3("Gene Level Summary Data"),
-      p("Includes gene scores, ranks, P-values, and sgRNA count", class = "text-muted"),
-      DTOutput("gene_summary_table"),
-      downloadButton("download_gene_summary", "Download Gene Summary Data (.csv)"),
-      if (!is.null(results$filtered_genes_sgrna_data) && nrow(results$filtered_genes_sgrna_data) > 0) {
-        tagList(
-          tags$hr(),
-          h3("Filtered Genes sgRNA Data"),
-          p(
-            sprintf(
-              "Genes excluded due to sgRNA count < threshold (%d genes removed)",
-              length(unique(results$filtered_genes_sgrna_data[[results$params$gene_col]]))
-            ),
-            class = "text-muted"
-          ),
-          DTOutput("filtered_genes_table"),
-          downloadButton("download_filtered_genes", "Download Filtered Genes Data (.csv)")
-        )
-      }
-    )
+    updateTabsetPanel(session, "workspace_area", selected = "visualization")
+    level <- switch(page, "sgRNA Paired Plot" = "sgrna", "Gene Visualization" = "gene", "pathway")
+    updateTabsetPanel(session, "visualization_level", selected = level)
+    if (level == "pathway") updateTabsetPanel(session, "pathway_plot_menu",
+      selected = if (page == "GSEA Enrichment Plot") "enrichment" else "lollipop")
   }
 }
 
-# Render GSEA Results UI
+render_data_proc_tables_ui <- function(results, level = "sgrna") {
+  tool <- results$params$analysis_tool
+  is_mageck <- !is.null(tool) && grepl("MAGeCK", tool, ignore.case = TRUE)
+  if (level == "gene") return(tagList(
+    p(if (is_mageck) "Original MAGeCK gene summary." else "Gene scores, ranks, P-values and sgRNA counts.", class = "text-muted"),
+    DTOutput("gene_summary_table"),
+    downloadButton("download_gene_summary", "Download gene summary (.csv)")))
+  tagList(
+    p(if (is_mageck) "Original MAGeCK sgRNA summary." else "Guide scores, rankings and deltaLFC per replicate.", class = "text-muted"),
+    DTOutput("sg_data_table"),
+    downloadButton("download_sg_data", "Download sgRNA data (.csv)"),
+    if (!is.null(results$filtered_genes_sgrna_data) && nrow(results$filtered_genes_sgrna_data) > 0) tagList(
+      tags$hr(), h3("Excluded guides"),
+      p("Guides from genes below the minimum sgRNA threshold.", class = "text-muted"),
+      DTOutput("filtered_genes_table"),
+      downloadButton("download_filtered_genes", "Download excluded guides (.csv)")))
+}
+
 render_gsea_results_tables_ui <- function(gsea_res) {
   tagList(
     if (!is.null(gsea_res) && !is.null(gsea_res$gsea_results_positive_df) && nrow(gsea_res$gsea_results_positive_df) > 0) {
@@ -124,20 +159,20 @@ render_gsea_results_tables_ui <- function(gsea_res) {
   )
 }
 
-# Render GSEA Params UI
 render_gsea_parameter_ui <- function(selected_gene_col_for_gsea = "Gene") {
   div(
     class = "section-box", id = "gsea_parameters_section",
-    h2("2. GSEA Analysis Parameters"),
-    fileInput("gmt_file_upload", "Upload Gene Set GMT File (.gmt)", accept = c(".gmt")),
-    p(strong("Gene ID Column for GSEA:"), code(selected_gene_col_for_gsea)),
+    panel_heading("Gene set analysis", "Choose gene sets and review enrichment settings.", "SETTINGS"),
+    upload_input("gmt_file_upload", "Choose a gene set file", "GMT gene sets", ".gmt"),
+    uiOutput("gmt_file_summary"),
     tags$hr(),
-    h3("GSEA Advanced Parameters (clusterProfiler)"),
-    fluidRow(column(12, numericInput("gsea_clp_n_perm", "Number of Permutations:", value = 1000, min = 100, step = 100))),
+    settings_group("Enrichment parameters",
+      fluidRow(column(12, numericInput("gsea_clp_n_perm", "Number of Permutations:", value = 1000, min = 100, step = 100))),
     fluidRow(column(12, numericInput("gsea_clp_pval_cutoff", "P-value Cutoff:", value = 1, min = 0, max = 1, step = 0.01))),
     fluidRow(column(12, numericInput("gsea_clp_min_gs_size", "Min Gene Set Size:", value = 15, min = 1, step = 1))),
     fluidRow(column(12, numericInput("gsea_max_gs_size", "Max Gene Set Size:", value = 500, min = 1, step = 1))),
-    fluidRow(column(12, checkboxInput("gsea_clp_seed", "Use Fixed Seed (123)", TRUE))),
+    fluidRow(column(12, checkboxInput("gsea_clp_seed", "Use Fixed Seed (123)", TRUE)))
+    ),
     actionButton("run_gsea_analysis",
       "Start GSEA Analysis",
       class = "btn-primary btn-lg btn-block",
@@ -147,30 +182,24 @@ render_gsea_parameter_ui <- function(selected_gene_col_for_gsea = "Gene") {
   )
 }
 
-
-# --- DataTable Options ---
 get_dt_options <- function() {
   list(
     scrollX = TRUE,
     pageLength = 10,
     lengthMenu = list(c(10, 25, 50, 100, -1), c("10", "25", "50", "100", "All")),
-    autoWidth = TRUE,
-    columnDefs = list(list(width = "120px", targets = "_all"))
+    autoWidth = FALSE
   )
 }
 
-# --- Generic Download Handler Generator Function ---
 gen_dl_handler <- function(data_key, prefix, results_reactive, raw_mageck_key = NULL) {
   downloadHandler(
     filename = function() {
       res_list <- results_reactive()
 
-      # Determine prefix based on analysis tool for MAGeCK
       final_prefix <- prefix
       if (!is.null(res_list$params$analysis_tool) && grepl("MAGeCK", res_list$params$analysis_tool)) {
         tool_prefix <- ifelse(grepl("MLE", res_list$params$analysis_tool), "mle", "rra")
 
-        # Update prefix for MAGeCK outputs
         if (data_key == "processed_sg_data") {
           final_prefix <- paste0(tool_prefix, ".sgrna_summary")
         } else if (data_key == "gene_summary_data") {
@@ -183,7 +212,6 @@ gen_dl_handler <- function(data_key, prefix, results_reactive, raw_mageck_key = 
     content = function(f) {
       res_list <- results_reactive()
 
-      # Prefer raw MAGeCK data if available
       data_to_export <- NULL
       if (!is.null(raw_mageck_key) && !is.null(res_list[[raw_mageck_key]])) {
         data_to_export <- res_list[[raw_mageck_key]]
@@ -200,8 +228,6 @@ gen_dl_handler <- function(data_key, prefix, results_reactive, raw_mageck_key = 
   )
 }
 
-# GSEA RDS Download Handler (Enhanced: Saves S4 Object + Results DF + Gene List)
-# GSEA RDS Download Handler (Enhanced: Saves S4 Object + Results DF + Gene List)
 gen_gsea_rds_dl_handler <- function(object_key, prefix, results_reactive) {
   downloadHandler(
     filename = function() {
@@ -210,13 +236,11 @@ gen_gsea_rds_dl_handler <- function(object_key, prefix, results_reactive) {
     content = function(f) {
       res_list <- results_reactive()
 
-      # Determine which result set we are saving (Positive or Negative)
       is_positive <- grepl("positive", object_key, ignore.case = TRUE)
 
       if (!is.null(res_list) && !is.null(res_list[[object_key]])) {
-        # Construct the enhanced list object to save
         save_obj <- list(
-          object = res_list[[object_key]], # The original S4 gseaResult object
+          object = res_list[[object_key]],
           results_df = if (is_positive) res_list$gsea_results_positive_df else res_list$gsea_results_negative_df,
           gene_list = if (is_positive) res_list$gene_list_positive else res_list$gene_list_negative
         )
@@ -230,15 +254,14 @@ gen_gsea_rds_dl_handler <- function(object_key, prefix, results_reactive) {
   )
 }
 
-# --- Input Validation Functions ---
 is_valid_hex <- function(hex) {
   grepl("^#[0-9A-Fa-f]{6}$", hex)
 }
 
 validate_hex_inputs <- function(hex_inputs, hex_labels, session) {
-  for (i in 1:length(hex_inputs)) {
+  for (i in seq_along(hex_inputs)) {
     if (!is_valid_hex(hex_inputs[i])) {
-      showNotification(paste0(hex_labels[i], " is not a valid hex code (e.g., #FF0000)"),
+      show_inline_message(paste0(hex_labels[i], " is not a valid hex code (e.g., #FF0000)"),
         type = "error", duration = 5, session = session
       )
       return(FALSE)
@@ -247,22 +270,19 @@ validate_hex_inputs <- function(hex_inputs, hex_labels, session) {
   return(TRUE)
 }
 
-# --- Column Selection Function ---
 select_col <- function(choices, patterns, ignore.case = TRUE) {
   for (p in patterns) {
     match_idx <- grepl(p, choices, ignore.case = ignore.case)
     if (any(match_idx)) {
       return(choices[which(match_idx)[1]])
-    } # Return first match
+    }
   }
   if (length(choices) > 0) {
     return(choices[1])
-  } # Default to first if no match
-  return(NULL) # Or empty if no choices
+  }
+  return(NULL)
 }
 
-# --- LFC Scatter Plot UI Rendering Function ---
-# --- sgRNA Paired Plot UI ---
 render_sgrna_params_ui_basic <- function(results) {
   req(results)
   req(results$normalized_counts, results$gene_summary_data, results$params$gene_col, results$params$gRNA_col)
@@ -271,7 +291,6 @@ render_sgrna_params_ui_basic <- function(results) {
   gene_summary_df <- results$gene_summary_data
   app_params <- results$params
 
-  # Get data column selection (numeric columns, exclude ID columns)
   id_cols_in_norm <- c(app_params$gRNA_col, app_params$gene_col, app_params$sequence_col)
   id_cols_in_norm <- id_cols_in_norm[!sapply(id_cols_in_norm, is.null)]
 
@@ -283,34 +302,29 @@ render_sgrna_params_ui_basic <- function(results) {
   }
 
   if (length(numeric_condition_cols) < 2) {
-    return(div(class = "section-box", id = "sgrna_paired_plot_params_box", h2("5. sgRNA Paired Plot Parameters"), p("Not enough numeric columns in normalized count data for paired plot (requires at least 2).")))
+    return(div(class = "section-box", id = "sgrna_paired_plot_params_box", panel_heading("Paired plot settings", "Select genes and compare two conditions.", "SETTINGS"), p("Not enough numeric columns in normalized count data for paired plot (requires at least 2).")))
   }
-
-  # Get all genes for selection
-  all_genes <- unique(gene_summary_df[[app_params$gene_col]])
 
   div(
     class = "section-box", id = "sgrna_paired_plot_params_box",
-    h2("5. sgRNA Paired Plot Parameters"),
+    panel_heading("Paired plot settings", "Select genes and compare two conditions.", "SETTINGS"),
 
-    # Gene Selection Method Selector
     radioButtons("sgrna_gene_selection_method", "Select Gene Selection Method:",
       choices = list("Direct Gene Selection" = "direct", "Select via GSEA Results" = "gsea"),
       selected = "direct", inline = TRUE
     ),
 
-    # Direct Gene Selection Interface
     conditionalPanel(
       condition = "input.sgrna_gene_selection_method == 'direct'",
       selectizeInput("sgrna_paired_gene_selector_direct", "Select Gene:",
         choices = NULL,
-        selected = NULL,
+        selected = character(0),
         multiple = TRUE,
-        options = list(placeholder = "Please select gene...")
+        options = list(placeholder = "Search genes...", maxOptions = 100)
       ),
       conditionalPanel(
         condition = "input.sgrna_paired_gene_selector_direct && input.sgrna_paired_gene_selector_direct.length > 0",
-        p("Selected", tags$span(id = "direct_gene_count", "0"), "genes", style = "color: #0066cc; font-weight: bold;"),
+        p("Selected", tags$span(id = "direct_gene_count", "0"), "genes", style = "color: #333333; font-weight: bold;"),
         tags$script(HTML("
             $(document).on('change', '#sgrna_paired_gene_selector_direct', function() {
               var count = $('#sgrna_paired_gene_selector_direct').val() ? $('#sgrna_paired_gene_selector_direct').val().length : 0;
@@ -319,30 +333,28 @@ render_sgrna_params_ui_basic <- function(results) {
           "))
       )
     ),
-    # Use server-side selectize: Update choices later
-    tags$script("Shiny.addCustomMessageHandler('update_sgrna_gene_choices', function(data) {
-       // Placeholder for potential future custom handlers if needed
-    });"),
+
     tags$hr(),
-    h4("2. Select Plotting Data Columns"),
+    h4("Select Plotting Data Columns"),
     selectInput("sgrna_paired_condition1_col", "Select Condition 1 Column:", choices = numeric_condition_cols, selected = if (length(numeric_condition_cols) > 0) numeric_condition_cols[1] else NULL),
     selectInput("sgrna_paired_condition2_col", "Select Condition 2 Column:", choices = numeric_condition_cols, selected = if (length(numeric_condition_cols) > 1) numeric_condition_cols[2] else if (length(numeric_condition_cols) > 0) numeric_condition_cols[1] else NULL),
     textInput("sgrna_paired_condition1_label", "Condition 1 Label (Optional):", placeholder = "e.g., Treatment"),
     textInput("sgrna_paired_condition2_label", "Condition 2 Label (Optional):", placeholder = "e.g., Control"),
     hr(),
-    h4("Colors and Styles"),
-    fluidRow(
-      column(6, textInput("sgrna_paired_color_cond1", "Condition 1 Color:", value = "#007AFF")),
-      column(6, textInput("sgrna_paired_color_cond2", "Condition 2 Color:", value = "#FC6A03"))
+    settings_group("Appearance",
+      fluidRow(
+      column(6, textInput("sgrna_paired_color_cond1", "Condition 1 Color:", value = "#104e8b")),
+      column(6, textInput("sgrna_paired_color_cond2", "Condition 2 Color:", value = "#b22222"))
     ),
-    textInput("sgrna_paired_line_color", "Connecting Line Color:", value = "#808080"),
+    textInput("sgrna_paired_line_color", "Connecting Line Color:", value = "#afc3d8"),
     sliderInput("sgrna_paired_point_size", "Point Size:", min = 0.5, max = 5, value = 2.5, step = 0.1),
     sliderInput("sgrna_paired_line_size", "Connecting Line Width:", min = 0.1, max = 3, value = 0.5, step = 0.1),
-    sliderInput("sgrna_paired_base_font_size", "Base Font Size:", min = 8, max = 20, value = 12, step = 1),
+    sliderInput("sgrna_paired_base_font_size", "Base Font Size (pt):", min = 8, max = 20, value = 8, step = 1),
     hr(),
     h4("Titles and Labels"),
     textInput("sgrna_paired_plot_title", "Main Plot Title (Optional):", placeholder = "Leave blank for default title"),
-    textInput("sgrna_paired_y_axis_label", "Y-axis Label (Optional):", value = "sgRNA Normalized Read Count"),
+    textInput("sgrna_paired_y_axis_label", "Y-axis Label (Optional):", value = "sgRNA Normalized Read Count")
+    ),
     actionButton("run_sgrna_paired_plot",
       "Generate sgRNA Paired Plot",
       class = "btn-primary",
@@ -361,7 +373,6 @@ render_sgrna_params_ui_basic <- function(results) {
   )
 }
 
-# --- GSEA Lollipop Plot UI ---
 render_gsea_lollipop_params_ui <- function(gsea_res_list) {
   req(gsea_res_list)
 
@@ -376,16 +387,18 @@ render_gsea_lollipop_params_ui <- function(gsea_res_list) {
   if (length(gsea_choices) > 0) {
     div(
       class = "section-box", id = "gsea_lollipop_params_box",
-      h2("3. GSEA Lollipop Plot Parameters"),
+      panel_heading("Lollipop settings", "Select pathways and refine the presentation.", "SETTINGS"),
       selectInput("gsea_lollipop_result_type", "Select GSEA Result Type:", choices = gsea_choices, selected = gsea_choices[1]),
       numericInput("gsea_lollipop_num_pathways", "Number of Pathways to Show:", value = 10, min = 1, max = 30, step = 1),
-      textInput("gsea_lollipop_bar_low", "Bar Low Value Color:", value = "#E0F3F8"),
-      textInput("gsea_lollipop_bar_high", "Bar High Value Color:", value = "#045275"),
-      textInput("gsea_lollipop_circle_low", "Circle Low Value Color:", value = "#FFF2CC"),
-      textInput("gsea_lollipop_circle_high", "Circle High Value Color:", value = "#D66000"),
-      sliderInput("gsea_lollipop_base_font", "Base Font Size:", value = 11, min = 7, max = 18, step = 1),
-      sliderInput("gsea_lollipop_bar_width", "Bar Width Ratio:", value = 0.1, min = 0.1, max = 1.0, step = 0.05),
-      textInput("gsea_lollipop_title", "Main Plot Title:", value = "GSEA enrichment pathway ranked plot"),
+      settings_group("Appearance",
+        textInput("gsea_lollipop_bar_low", "Bar Low Value Color:", value = "#d7e1eb"),
+      textInput("gsea_lollipop_bar_high", "Bar High Value Color:", value = "#104e8b"),
+      textInput("gsea_lollipop_circle_low", "Circle Low Value Color:", value = "#f2dada"),
+      textInput("gsea_lollipop_circle_high", "Circle High Value Color:", value = "#b22222"),
+      sliderInput("gsea_lollipop_base_font", "Base Font Size (pt):", value = 8, min = 7, max = 18, step = 1),
+      sliderInput("gsea_lollipop_bar_width", "Bar Width Ratio:", value = 0.3, min = 0.1, max = 1.0, step = 0.05),
+      textInput("gsea_lollipop_title", "Main Plot Title:", value = "GSEA enrichment pathway ranked plot")
+      ),
       actionButton("run_gsea_lollipop_plot",
         "Generate GSEA Lollipop Plot",
         class = "btn-primary",
@@ -405,13 +418,12 @@ render_gsea_lollipop_params_ui <- function(gsea_res_list) {
   } else {
     div(
       class = "section-box", id = "gsea_lollipop_params_box",
-      h2("3. GSEA Lollipop Plot Parameters"),
+      panel_heading("Lollipop settings", "Select pathways and refine the presentation.", "SETTINGS"),
       p("No GSEA results available (Positive or Negative) for plotting.")
     )
   }
 }
 
-# --- GSEA Enrichment Plot UI ---
 render_gsea_enrichment_params_ui <- function(gsea_res_list) {
   req(gsea_res_list)
 
@@ -423,20 +435,18 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
     gsea_choices_enrich <- c(gsea_choices_enrich, "Negative Score GSEA" = "negative")
   }
   if (length(gsea_choices_enrich) == 0) {
-    return(div(class = "section-box", h2("4. GSEA Pathway Enrichment Plot Parameters"), p("No GSEA results available for pathway plotting.")))
+    return(div(class = "section-box", panel_heading("Enrichment settings", "Choose pathways and configure the enrichment curve.", "SETTINGS"), p("No GSEA results available for pathway plotting.")))
   }
 
   div(
     class = "section-box", id = "gsea_enrichment_plot_params_box",
-    h2("4. GSEA Pathway Enrichment Plot Parameters"),
+    panel_heading("Enrichment settings", "Choose pathways and configure the enrichment curve.", "SETTINGS"),
 
-    # GSEA Result Type Selection
     selectInput("gsea_enrichment_plot_result_type", "Select GSEA Result Type:",
       choices = gsea_choices_enrich,
       selected = gsea_choices_enrich[1]
     ),
 
-    # Multi-pathway Selection
     tags$style(HTML("
       #gsea_enrichment_plot_pathway_selector + .selectize-control .selectize-input {
         white-space: normal !important;
@@ -465,7 +475,7 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
       "Select Pathways for Visualization (Multiple Allowed):",
       choices = NULL,
       multiple = TRUE,
-      width = "100%", # Ensure input takes full container width
+      width = "100%",
       options = list(
         placeholder = "Please select result type first...",
         maxItems = 10,
@@ -473,7 +483,6 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
       )
     ),
 
-    # Pathway Color Settings (Only shown when multiple pathways are selected)
     conditionalPanel(
       condition = "input.gsea_enrichment_plot_pathway_selector && input.gsea_enrichment_plot_pathway_selector.length > 1",
       div(
@@ -481,7 +490,7 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
         h4("Pathway Color Settings"),
         div(
           class = "alert alert-warning", style = "font-size: 13px; padding: 8px;",
-          p("💡 You can manually specify colors for each selected pathway.",
+          p(" You can manually specify colors for each selected pathway.",
             style = "margin: 0;"
           )
         ),
@@ -489,9 +498,8 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
       )
     ),
 
-    # Gene Highlight Settings
     div(
-      style = "margin: 15px 0; padding: 15px; background-color: #f8f9fa; border-radius: 8px;",
+      style = "margin: 15px 0; padding: 15px; background-color: #f5f5f5; border-radius: 8px;",
       h4("Gene Highlight Settings (Optional)"),
       checkboxInput("gsea_enrichment_enable_gene_highlight",
         "Enable Gene Highlighting",
@@ -502,7 +510,7 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
         div(
           style = "margin-top: 10px;",
           p("Please select genes to highlight from the core genes of the selected pathway:",
-            style = "font-size: 14px; color: #495057;"
+            style = "font-size: 14px; color: #494949;"
           ),
           selectizeInput("gsea_enrichment_highlight_genes",
             "Select Highlight Genes:",
@@ -518,7 +526,6 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
       )
     ),
 
-    # Plot Parameter Settings
     div(
       style = "margin: 15px 0;",
       h4("Plot Parameters"),
@@ -527,8 +534,8 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
         value = 20, min = 10, max = 50, step = 1
       ),
       sliderInput("gsea_enrichment_base_font",
-        "Base Font Size:",
-        value = 10, min = 8, max = 16, step = 1
+        "Base Font Size (pt):",
+        value = 8, min = 8, max = 16, step = 1
       ),
       numericInput("gsea_enrichment_legend_x",
         "Legend X Position:",
@@ -544,23 +551,22 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
         selected = 2
       ),
       checkboxInput("gsea_enrichment_add_pval",
-        "Show p-value",
+        "Show enrichment statistics",
         value = TRUE
       ),
       conditionalPanel(
         condition = "input.gsea_enrichment_add_pval",
         numericInput("gsea_enrichment_pval_x",
-          "p-value X Position:",
+          "Statistics X Position:",
           value = 0.02, min = 0, max = 1, step = 0.01
         ),
         numericInput("gsea_enrichment_pval_y",
-          "p-value Y Position:",
+          "Statistics Y Position:",
           value = 0.04, min = 0, max = 1, step = 0.01
         )
       )
     ),
 
-    # Generate Button
     actionButton("run_gsea_enrichment_plot",
       "Generate GSEA Pathway Enrichment Plot",
       class = "btn-primary btn-lg",
@@ -568,41 +574,33 @@ render_gsea_enrichment_params_ui <- function(gsea_res_list) {
       style = "margin-top: 15px; width: 100%; white-space: normal; height: auto; padding: 12px 16px; line-height: 1.5; font-size: 16px; box-sizing: border-box;"
     ),
 
-    # Remove color input style script because highlight colors are fixed
   )
 }
 
-# --- Pathway Color Input UI ---
 render_pathway_color_inputs <- function(selected_pathways) {
   if (is.null(selected_pathways) || length(selected_pathways) == 0) {
     return(div(p("Please select a pathway first", style = "color: #666; font-style: italic;")))
   }
 
-  # Generate Default Colors
-  default_colors <- if (length(selected_pathways) <= 8) {
-    RColorBrewer::brewer.pal(max(3, length(selected_pathways)), "Set2")[1:length(selected_pathways)]
-  } else {
-    rainbow(length(selected_pathways))
-  }
+  default_colors <- atop_pathway_colors(length(selected_pathways))
 
-  # Generate Color Inputs
-  color_inputs <- lapply(1:length(selected_pathways), function(i) {
+  color_inputs <- lapply(seq_along(selected_pathways), function(i) {
     pathway_id <- selected_pathways[i]
-    pathway_name <- gsub("^[A-Z_]+_", "", pathway_id) # Simplify pathway name display
+    pathway_name <- gsub("^[A-Z_]+_", "", pathway_id)
     input_id <- paste0("pathway_color_", i)
 
     div(
       style = "margin: 5px 0; border-bottom: 1px solid #eee; padding-bottom: 5px;",
       div(
         style = "display: flex; align-items: center; justify-content: space-between;",
-        # Pathway Name (Flexible width, wraps text)
+
         div(
           style = "flex: 1; padding-right: 10px; min-width: 0;",
           strong(pathway_name,
-            style = "font-size: 13px; color: #495057; display: block; word-wrap: break-word;"
+            style = "font-size: 13px; color: #494949; display: block; word-wrap: break-word;"
           )
         ),
-        # Color Input (Fixed width 120px)
+
         div(
           style = "flex: 0 0 120px;",
           textInput(input_id,
@@ -622,7 +620,7 @@ render_pathway_color_inputs <- function(selected_pathways) {
       "
       $(document).ready(function(){
         var pathway_color_inputs = [",
-      paste0("'pathway_color_", 1:length(selected_pathways), "'", collapse = ", "),
+      paste0("'pathway_color_", seq_along(selected_pathways), "'", collapse = ", "),
       "];
         pathway_color_inputs.forEach(function(id) {
           updateColorInputStyle(id);
@@ -635,25 +633,17 @@ render_pathway_color_inputs <- function(selected_pathways) {
     )))
   ))
 }
-# --- Gene Visualization Functions ---
 
-# --- Gene Vis Params UI ---
 render_gene_vis_params_ui <- function(results) {
   req(results)
   req(results$gene_summary_data)
 
   gene_summary_df <- results$gene_summary_data
-  all_genes <- unique(gene_summary_df[[results$params$gene_col]])
 
   div(
     class = "section-box", id = "gene_vis_params_box",
-    h2("6. Gene Visualization Parameters"),
-    selectInput("gene_vis_plot_type", "Select Plot Type:",
-      choices = c("Volcano Plot" = "volcano", "Gene Score Ranking" = "ranking"),
-      selected = "volcano"
-    ),
+    panel_heading("Gene plot settings", "Adjust the selected plot and its appearance.", "SETTINGS"),
 
-    # --- Volcano Plot Parameters ---
     conditionalPanel(
       condition = "input.gene_vis_plot_type == 'volcano'",
       h4("Volcano Plot Settings"),
@@ -663,18 +653,17 @@ render_gene_vis_params_ui <- function(results) {
       ),
       selectizeInput("gene_vis_volcano_labels", "Genes to Label:",
         choices = NULL, multiple = TRUE,
-        options = list(placeholder = "Select genes to label...", maxItems = 50)
+        options = list(placeholder = "Search genes to label...", maxItems = 50, maxOptions = 100)
       ),
       h5("Colors"),
       div(
         class = "color-inputs-vertical",
-        textInput("gene_vis_volcano_col_up", "Up Color:", value = "#E31A1C"),
-        textInput("gene_vis_volcano_col_down", "Down Color:", value = "#1F78B4"),
-        textInput("gene_vis_volcano_col_ns", "NS Color:", value = "#ADB6B6")
+        textInput("gene_vis_volcano_col_up", "Up Color:", value = "#b22222"),
+        textInput("gene_vis_volcano_col_down", "Down Color:", value = "#104e8b"),
+        textInput("gene_vis_volcano_col_ns", "NS Color:", value = "#d7e1eb")
       )
     ),
 
-    # --- Ranking Plot Parameters ---
     conditionalPanel(
       condition = "input.gene_vis_plot_type == 'ranking'",
       h4("Ranking Plot Settings"),
@@ -685,14 +674,15 @@ render_gene_vis_params_ui <- function(results) {
       numericInput("gene_vis_ranking_top_n", "Top N Genes:", value = 10, min = 5, max = 50, step = 1),
       h5("Gradient Colors"),
       fluidRow(
-        column(6, textInput("gene_vis_ranking_col_low", "Low Score Color:", value = "#fee0d2")),
-        column(6, textInput("gene_vis_ranking_col_high", "High Score Color:", value = "#a50f15"))
+        column(6, textInput("gene_vis_ranking_col_low", "Low Score Color:", value = "#f2dada")),
+        column(6, textInput("gene_vis_ranking_col_high", "High Score Color:", value = "#b22222"))
       )
     ),
     tags$hr(),
-    h4("General Settings"),
-    sliderInput("gene_vis_base_font_size", "Base Font Size:", min = 8, max = 24, value = 14, step = 1),
-    textInput("gene_vis_plot_title", "Plot Title (Optional):", placeholder = "Leave blank for default"),
+    settings_group("Labels and typography",
+      sliderInput("gene_vis_base_font_size", "Base Font Size (pt):", min = 8, max = 24, value = 8, step = 1),
+    textInput("gene_vis_plot_title", "Plot Title (Optional):", placeholder = "Leave blank for default")
+    ),
     actionButton("run_gene_vis_plot",
       "Generate Plot",
       class = "btn-primary",
@@ -712,17 +702,15 @@ render_gene_vis_params_ui <- function(results) {
   )
 }
 
-# --- Gene Vis Observer ---
 observe_gene_vis_plot_generation <- function(input, output, session, data_processing_results,
                                              gene_vis_plot_object, gene_vis_plot_params_for_download) {
-  # Auto-update colors based on ranking type
   observeEvent(input$gene_vis_ranking_type, {
     if (input$gene_vis_ranking_type == "positive") {
-      updateTextInput(session, "gene_vis_ranking_col_low", value = "#fee0d2")
-      updateTextInput(session, "gene_vis_ranking_col_high", value = "#a50f15")
+      updateTextInput(session, "gene_vis_ranking_col_low", value = "#f2dada")
+      updateTextInput(session, "gene_vis_ranking_col_high", value = "#b22222")
     } else if (input$gene_vis_ranking_type == "negative") {
-      updateTextInput(session, "gene_vis_ranking_col_low", value = "#08519c")
-      updateTextInput(session, "gene_vis_ranking_col_high", value = "#deebf7")
+      updateTextInput(session, "gene_vis_ranking_col_low", value = "#104e8b")
+      updateTextInput(session, "gene_vis_ranking_col_high", value = "#d7e1eb")
     }
   })
 
@@ -732,7 +720,7 @@ observe_gene_vis_plot_generation <- function(input, output, session, data_proces
     plot_type <- input$gene_vis_plot_type
     gene_summary <- data_processing_results()$gene_summary_data
 
-    output$gene_vis_plot_status <- renderPrint({
+    output$gene_vis_plot_status <- renderText({
       "Generating plot..."
     })
     gene_vis_plot_object(NULL)
@@ -772,14 +760,14 @@ observe_gene_vis_plot_generation <- function(input, output, session, data_proces
         gene_vis_plot_object(p)
         gene_vis_plot_params_for_download(params)
 
-        output$gene_vis_plot_status <- renderPrint({
+        output$gene_vis_plot_status <- renderText({
           paste("Plot generated successfully at", Sys.time())
         })
         shinyjs::show("gene_vis_download_options")
-        updateTabsetPanel(session, "main_results_tabs", selected = "Gene Visualization")
+        navigate_workspace(session, "Gene Visualization")
       },
       error = function(e) {
-        output$gene_vis_plot_status <- renderPrint({
+        output$gene_vis_plot_status <- renderText({
           paste("Error:", e$message)
         })
       }
@@ -787,8 +775,7 @@ observe_gene_vis_plot_generation <- function(input, output, session, data_proces
   })
 }
 
-# --- Gene Vis Download Handler ---
-create_gene_vis_download_handler <- function(input, gene_vis_plot_object, gene_vis_plot_params_for_download) {
+create_gene_vis_download_handler <- function(input, gene_vis_plot_object, gene_vis_plot_params_for_download, dimensions) {
   downloadHandler(
     filename = function() {
       type <- gene_vis_plot_params_for_download()$type
@@ -799,17 +786,15 @@ create_gene_vis_download_handler <- function(input, gene_vis_plot_object, gene_v
       req(gene_vis_plot_object())
       p <- gene_vis_plot_object()
 
-      width <- input$gene_vis_download_width
-      height <- input$gene_vis_download_height
-      dpi <- if (!is.null(input$gene_vis_download_dpi)) input$gene_vis_download_dpi else 300
+      width <- dimensions()$width
+      height <- dimensions()$height
+      dpi <- if (!is.null(dimensions()$dpi)) dimensions()$dpi else 300
 
-      ggsave(file, plot = p, width = width, height = height, dpi = dpi, device = input$gene_vis_download_format)
+      ggsave(file, plot = p, width = width, height = height, units = "cm", bg = "white", dpi = dpi, device = publication_device(input$gene_vis_download_format))
     }
   )
 }
 
-
-# --- sgRNA Paired Plot UI ---
 render_sgrna_params_ui_with_gsea <- function(results, gsea_res_list) {
   req(results, gsea_res_list)
   req(results$normalized_counts, results$gene_summary_data, results$params$gene_col, results$params$gRNA_col)
@@ -818,7 +803,6 @@ render_sgrna_params_ui_with_gsea <- function(results, gsea_res_list) {
   gene_summary_df <- results$gene_summary_data
   app_params <- results$params
 
-  # Get numeric data columns (excluding IDs)
   id_cols_in_norm <- c(app_params$gRNA_col, app_params$gene_col, app_params$sequence_col)
   id_cols_in_norm <- id_cols_in_norm[!sapply(id_cols_in_norm, is.null)]
 
@@ -830,13 +814,10 @@ render_sgrna_params_ui_with_gsea <- function(results, gsea_res_list) {
   }
 
   if (length(numeric_condition_cols) < 2) {
-    return(div(class = "section-box", id = "sgrna_paired_plot_params_box", h2("5. sgRNA Paired Plot Parameters"), p("Not enough numeric columns in normalized count data for paired plot (requires at least 2).")))
+    return(div(class = "section-box", id = "sgrna_paired_plot_params_box", panel_heading("Paired plot settings", "Select genes and compare two conditions.", "SETTINGS"), p("Not enough numeric columns in normalized count data for paired plot (requires at least 2).")))
   }
 
-  # Get all genes for selection
-  all_genes <- unique(gene_summary_df[[app_params$gene_col]])
 
-  # Prepare GSEA selector choices
   gsea_type_choices <- character(0)
   if (!is.null(gsea_res_list$gsea_results_positive_df) && nrow(gsea_res_list$gsea_results_positive_df) > 0) {
     gsea_type_choices <- c(gsea_type_choices, "Positive Score GSEA" = "positive")
@@ -847,26 +828,24 @@ render_sgrna_params_ui_with_gsea <- function(results, gsea_res_list) {
 
   div(
     class = "section-box", id = "sgrna_paired_plot_params_box",
-    h2("5. sgRNA Paired Plot Parameters"),
+    panel_heading("Paired plot settings", "Select genes and compare two conditions.", "SETTINGS"),
 
-    # Gene selection method
     radioButtons("sgrna_gene_selection_method", "Select Gene Selection Method:",
       choices = list("Direct Gene Selection" = "direct", "Select via GSEA Results" = "gsea"),
       selected = "direct", inline = TRUE
     ),
 
-    # Direct gene selection UI
     conditionalPanel(
       condition = "input.sgrna_gene_selection_method == 'direct'",
       selectizeInput("sgrna_paired_gene_selector_direct", "Select Gene:",
-        choices = all_genes,
-        selected = NULL,
+        choices = NULL,
+        selected = character(0),
         multiple = TRUE,
         options = list(placeholder = "Please select gene...")
       ),
       conditionalPanel(
         condition = "input.sgrna_paired_gene_selector_direct && input.sgrna_paired_gene_selector_direct.length > 0",
-        p("Selected", tags$span(id = "direct_gene_count_gsea", "0"), "genes", style = "color: #0066cc; font-weight: bold;"),
+        p("Selected", tags$span(id = "direct_gene_count_gsea", "0"), "genes", style = "color: #333333; font-weight: bold;"),
         tags$script(HTML("
             $(document).on('change', '#sgrna_paired_gene_selector_direct', function() {
               var count = $('#sgrna_paired_gene_selector_direct').val() ? $('#sgrna_paired_gene_selector_direct').val().length : 0;
@@ -876,7 +855,6 @@ render_sgrna_params_ui_with_gsea <- function(results, gsea_res_list) {
       )
     ),
 
-    # Gene selection via GSEA UI
     conditionalPanel(
       condition = "input.sgrna_gene_selection_method == 'gsea'",
       selectizeInput("sgrna_paired_gsea_type_selector", "1. Select GSEA Result Source:",
@@ -919,25 +897,26 @@ render_sgrna_params_ui_with_gsea <- function(results, gsea_res_list) {
       )
     ),
     tags$hr(),
-    h4("4. Select Plotting Data Columns"),
+    h4("Select Plotting Data Columns"),
     selectInput("sgrna_paired_condition1_col", "Select Condition 1 Column:", choices = numeric_condition_cols, selected = if (length(numeric_condition_cols) > 0) numeric_condition_cols[1] else NULL),
     selectInput("sgrna_paired_condition2_col", "Select Condition 2 Column:", choices = numeric_condition_cols, selected = if (length(numeric_condition_cols) > 1) numeric_condition_cols[2] else if (length(numeric_condition_cols) > 0) numeric_condition_cols[1] else NULL),
     textInput("sgrna_paired_condition1_label", "Condition 1 Label (Optional):", placeholder = "e.g., Treatment"),
     textInput("sgrna_paired_condition2_label", "Condition 2 Label (Optional):", placeholder = "e.g., Control"),
     hr(),
-    h4("Colors and Styles"),
-    fluidRow(
-      column(6, textInput("sgrna_paired_color_cond1", "Condition 1 Color:", value = "#007AFF")),
-      column(6, textInput("sgrna_paired_color_cond2", "Condition 2 Color:", value = "#FC6A03"))
+    settings_group("Appearance",
+      fluidRow(
+      column(6, textInput("sgrna_paired_color_cond1", "Condition 1 Color:", value = "#104e8b")),
+      column(6, textInput("sgrna_paired_color_cond2", "Condition 2 Color:", value = "#b22222"))
     ),
-    textInput("sgrna_paired_line_color", "Connecting Line Color:", value = "#808080"),
+    textInput("sgrna_paired_line_color", "Connecting Line Color:", value = "#afc3d8"),
     sliderInput("sgrna_paired_point_size", "Point Size:", min = 0.5, max = 5, value = 2.5, step = 0.1),
     sliderInput("sgrna_paired_line_size", "Connecting Line Width:", min = 0.1, max = 3, value = 0.5, step = 0.1),
-    sliderInput("sgrna_paired_base_font_size", "Base Font Size:", min = 8, max = 20, value = 12, step = 1),
+    sliderInput("sgrna_paired_base_font_size", "Base Font Size (pt):", min = 8, max = 20, value = 8, step = 1),
     hr(),
     h4("Titles and Labels"),
     textInput("sgrna_paired_plot_title", "Main Plot Title (Optional):", placeholder = "Leave blank for default title"),
-    textInput("sgrna_paired_y_axis_label", "Y-axis Label (Optional):", value = "sgRNA Normalized Read Count"),
+    textInput("sgrna_paired_y_axis_label", "Y-axis Label (Optional):", value = "sgRNA Normalized Read Count")
+    ),
     actionButton("run_sgrna_paired_plot",
       "Generate sgRNA Paired Plot",
       class = "btn-primary",
@@ -956,8 +935,6 @@ render_sgrna_params_ui_with_gsea <- function(results, gsea_res_list) {
   )
 }
 
-# --- sgRNA Paired Plot Functions ---
-# sgRNA Paired Plot Observer
 observe_sgrna_paired_plot_generation <- function(input, output, session, data_processing_results, gsea_results,
                                                  sgrna_paired_plot_object, sgrna_paired_plot_params_for_download,
                                                  sgrna_plot_batch_genes, sgrna_plot_batch_active) {
@@ -970,58 +947,50 @@ observe_sgrna_paired_plot_generation <- function(input, output, session, data_pr
       input$sgrna_paired_condition2_col
     )
 
-    # Common variables
     norm_counts <- data_processing_results()$normalized_counts
     app_params <- data_processing_results()$params
     cond1_col <- input$sgrna_paired_condition1_col
     cond2_col <- input$sgrna_paired_condition2_col
 
-    # Validate common inputs
     if (cond1_col == cond2_col) {
-      showNotification("Condition 1 and Condition 2 columns cannot be the same.", type = "error")
+      show_inline_message("Condition 1 and Condition 2 columns cannot be the same.", type = "error")
       return()
     }
     if (!is_valid_hex_or_name(input$sgrna_paired_color_cond1)) {
-      showNotification("Condition 1 color is not a valid hex code or color name.", type = "error")
+      show_inline_message("Condition 1 color is not a valid hex code or color name.", type = "error")
       return()
     }
     if (!is_valid_hex_or_name(input$sgrna_paired_color_cond2)) {
-      showNotification("Condition 2 color is not a valid hex code or color name.", type = "error")
+      show_inline_message("Condition 2 color is not a valid hex code or color name.", type = "error")
       return()
     }
     if (!is_valid_hex_or_name(input$sgrna_paired_line_color)) {
-      showNotification("Connecting line color is not a valid hex code or color name.", type = "error")
+      show_inline_message("Connecting line color is not a valid hex code or color name.", type = "error")
       return()
     }
 
-    # Check selection method
     selection_method <- input$sgrna_gene_selection_method
-    if (is.null(selection_method)) selection_method <- "direct" # Default to direct
+    if (is.null(selection_method)) selection_method <- "direct"
 
     if (selection_method == "direct") {
-      # Direct selection mode
-      # Check number of selected genes
       selected_genes <- input$sgrna_paired_gene_selector_direct
       if (!is.null(selected_genes) && length(selected_genes) > 1) {
-        # Batch mode (multiple genes)
         sgrna_plot_batch_genes(selected_genes)
         sgrna_plot_batch_active(TRUE)
         sgrna_paired_plot_object(NULL)
-        output$sgrna_paired_plot_batch_status <- renderPrint({
+        output$sgrna_paired_plot_batch_status <- renderText({
           paste0("Ready to batch download paired plots for ", length(selected_genes), " genes. Click the button below to download the ZIP file.")
         })
         shinyjs::hide("sgrna_paired_plot_download_options")
-        updateTabsetPanel(session, "main_results_tabs", selected = "sgRNA Paired Plot")
+        navigate_workspace(session, "sgRNA Paired Plot")
       } else if (!is.null(selected_genes) && length(selected_genes) == 1) {
-        # Single gene mode
         target_gene <- selected_genes[1]
 
-        # Single plot logic
         if (!is.null(sgrna_plot_batch_active)) {
           sgrna_plot_batch_active(FALSE)
         }
 
-        output$sgrna_paired_plot_status <- renderPrint({
+        output$sgrna_paired_plot_status <- renderText({
           "Generating sgRNA Paired Plot..."
         })
         sgrna_paired_plot_object(NULL)
@@ -1059,35 +1028,31 @@ observe_sgrna_paired_plot_generation <- function(input, output, session, data_pr
                 title = input$sgrna_paired_plot_title
               ))
             }
-            output$sgrna_paired_plot_status <- renderPrint({
+            output$sgrna_paired_plot_status <- renderText({
               paste0("sgRNA Paired Plot (Gene: ", target_gene, ") generated. ", Sys.time())
             })
             shinyjs::show("sgrna_paired_plot_download_options")
-            updateTabsetPanel(session, "main_results_tabs", selected = "sgRNA Paired Plot")
+            navigate_workspace(session, "sgRNA Paired Plot")
           },
           error = function(e) {
             error_msg <- paste("Error generating sgRNA Paired Plot:\n", e$message)
-            output$sgrna_paired_plot_status <- renderPrint({
+            output$sgrna_paired_plot_status <- renderText({
               error_msg
             })
             sgrna_paired_plot_object(NULL)
-            showModal(modalDialog(title = "sgRNA Paired Plot Generation Failed", HTML(paste0("Error Details: <br><pre style='white-space: pre-wrap;'>", e$message, "</pre>"))))
+            show_inline_message(paste("sgRNA Paired Plot Generation Failed:", e$message), type = "error")
           }
         )
       } else {
-        # No gene selected warning
-        showNotification("Please select at least one gene to plot.", type = "warning")
+        show_inline_message("Please select at least one gene to plot.", type = "warning")
         return()
       }
     } else if (selection_method == "gsea") {
-      # GSEA selection mode
-      # Check for GSEA batch mode
       if (!is.null(input$sgrna_paired_plot_all_genes) && isTRUE(input$sgrna_paired_plot_all_genes)) {
-        # Batch mode (requires GSEA)
         req(input$sgrna_paired_pathway_selector, gsea_results())
         selected_pathway_id <- input$sgrna_paired_pathway_selector
         if (is.null(selected_pathway_id) || selected_pathway_id == "") {
-          showNotification("Please select a pathway for batch plotting.", type = "warning")
+          show_inline_message("Please select a pathway for batch plotting.", type = "warning")
           return()
         }
 
@@ -1101,7 +1066,7 @@ observe_sgrna_paired_plot_generation <- function(input, output, session, data_pr
         }
 
         if (is.null(source_gsea_df) || !(selected_pathway_id %in% source_gsea_df$ID)) {
-          showNotification("Cannot find GSEA data for the selected pathway.", type = "error")
+          show_inline_message("Cannot find GSEA data for the selected pathway.", type = "error")
           return()
         }
 
@@ -1117,7 +1082,7 @@ observe_sgrna_paired_plot_generation <- function(input, output, session, data_pr
         }
 
         if (length(genes_to_plot) == 0) {
-          output$sgrna_paired_plot_batch_status <- renderPrint({
+          output$sgrna_paired_plot_batch_status <- renderText({
             "Error: No core genes in the selected pathway, or core genes have no plottable sgRNA in the data."
           })
           sgrna_plot_batch_genes(NULL)
@@ -1128,24 +1093,23 @@ observe_sgrna_paired_plot_generation <- function(input, output, session, data_pr
         sgrna_plot_batch_genes(genes_to_plot)
         sgrna_plot_batch_active(TRUE)
         sgrna_paired_plot_object(NULL)
-        output$sgrna_paired_plot_batch_status <- renderPrint({
+        output$sgrna_paired_plot_batch_status <- renderText({
           paste0("Ready to batch download paired plots for ", length(genes_to_plot), " core genes. Click the button below to download the ZIP file.")
         })
         shinyjs::hide("sgrna_paired_plot_download_options")
-        updateTabsetPanel(session, "main_results_tabs", selected = "sgRNA Paired Plot")
+        navigate_workspace(session, "sgRNA Paired Plot")
       } else {
-        # Single plot mode (GSEA)
         if (!is.null(sgrna_plot_batch_active)) {
           sgrna_plot_batch_active(FALSE)
         }
         req(input$sgrna_paired_gene_selector)
         target_gene <- input$sgrna_paired_gene_selector
         if (is.null(target_gene) || target_gene == "") {
-          showNotification("Please select a gene to plot.", type = "warning")
+          show_inline_message("Please select a gene to plot.", type = "warning")
           return()
         }
 
-        output$sgrna_paired_plot_status <- renderPrint({
+        output$sgrna_paired_plot_status <- renderText({
           "Generating sgRNA Paired Plot..."
         })
         sgrna_paired_plot_object(NULL)
@@ -1183,19 +1147,19 @@ observe_sgrna_paired_plot_generation <- function(input, output, session, data_pr
                 title = input$sgrna_paired_plot_title
               ))
             }
-            output$sgrna_paired_plot_status <- renderPrint({
+            output$sgrna_paired_plot_status <- renderText({
               paste0("sgRNA Paired Plot (Gene: ", target_gene, ") generated. ", Sys.time())
             })
             shinyjs::show("sgrna_paired_plot_download_options")
-            updateTabsetPanel(session, "main_results_tabs", selected = "sgRNA Paired Plot")
+            navigate_workspace(session, "sgRNA Paired Plot")
           },
           error = function(e) {
             error_msg <- paste("Error generating sgRNA Paired Plot:\n", e$message)
-            output$sgrna_paired_plot_status <- renderPrint({
+            output$sgrna_paired_plot_status <- renderText({
               error_msg
             })
             sgrna_paired_plot_object(NULL)
-            showModal(modalDialog(title = "sgRNA Paired Plot Generation Failed", HTML(paste0("Error Details: <br><pre style='white-space: pre-wrap;'>", e$message, "</pre>"))))
+            show_inline_message(paste("sgRNA Paired Plot Generation Failed:", e$message), type = "error")
           }
         )
       }
@@ -1203,8 +1167,7 @@ observe_sgrna_paired_plot_generation <- function(input, output, session, data_pr
   })
 }
 
-# sgRNA Paired Plot Download Handler
-create_sgrna_paired_plot_download_handler <- function(input, sgrna_paired_plot_object, sgrna_paired_plot_params_for_download) {
+create_sgrna_paired_plot_download_handler <- function(input, sgrna_paired_plot_object, sgrna_paired_plot_params_for_download, dimensions) {
   downloadHandler(
     filename = function() {
       req(sgrna_paired_plot_params_for_download())
@@ -1216,26 +1179,25 @@ create_sgrna_paired_plot_download_handler <- function(input, sgrna_paired_plot_o
       paste0("sgRNA_PairedPlot_", gene_name_safe, "_", title_part, "_", format(Sys.time(), "%Y_%m_%d_%H%M%S"), ".", input$sgrna_paired_download_format)
     },
     content = function(file) {
-      req(sgrna_paired_plot_object(), input$sgrna_paired_download_width, input$sgrna_paired_download_height)
+      req(sgrna_paired_plot_object(), dimensions()$width, dimensions()$height)
 
       ggsave(file,
-        plot = sgrna_paired_plot_object(), device = input$sgrna_paired_download_format,
-        width = input$sgrna_paired_download_width, height = input$sgrna_paired_download_height,
-        units = "in", dpi = if (input$sgrna_paired_download_format == "png") input$sgrna_paired_download_dpi else 300,
+        plot = sgrna_paired_plot_object(), device = publication_device(input$sgrna_paired_download_format),
+        width = dimensions()$width, height = dimensions()$height,
+        units = "cm", dpi = if (input$sgrna_paired_download_format == "png") dimensions()$dpi else 300,
         bg = "white"
       )
     }
   )
 }
 
-# sgRNA Batch Download Handler
 create_sgrna_batch_download_handler <- function(input, output, sgrna_plot_batch_genes, data_processing_results, gsea_results) {
   downloadHandler(
     filename = function() {
       req(input$sgrna_paired_pathway_selector)
       pathway_id <- input$sgrna_paired_pathway_selector
-      # Try to get pathway description for filename
-      pathway_desc <- pathway_id # Fallback to ID
+
+      pathway_desc <- pathway_id
       gsea_res_list <- gsea_results()
       selected_gsea_type <- input$sgrna_paired_gsea_type_selector
       source_df_for_desc <- NULL
@@ -1267,7 +1229,7 @@ create_sgrna_batch_download_handler <- function(input, output, sgrna_plot_batch_
         stop("No genes prepared for batch plotting.")
       }
 
-      output$sgrna_paired_plot_batch_status <- renderPrint({
+      output$sgrna_paired_plot_batch_status <- renderText({
         "Generating and compressing plots, please wait..."
       })
 
@@ -1277,7 +1239,6 @@ create_sgrna_batch_download_handler <- function(input, output, sgrna_plot_batch_
 
       plot_files <- c()
 
-      # Common plotting params
       norm_counts_data <- data_processing_results()$normalized_counts
       app_params_data <- data_processing_results()$params
       cond1_col_plot <- input$sgrna_paired_condition1_col
@@ -1292,7 +1253,6 @@ create_sgrna_batch_download_handler <- function(input, output, sgrna_plot_batch_
       base_font_plot <- input$sgrna_paired_base_font_size
       y_label_plot <- input$sgrna_paired_y_axis_label
 
-      # Batch download settings
       plot_format_batch <- input$sgrna_batch_download_format
       plot_width_batch <- input$sgrna_batch_download_width
       plot_height_batch <- input$sgrna_batch_download_height
@@ -1341,8 +1301,8 @@ create_sgrna_batch_download_handler <- function(input, output, sgrna_plot_batch_
             tryCatch(
               {
                 ggsave(plot_filename,
-                  plot = plot_obj_gene, device = plot_format_batch,
-                  width = plot_width_batch, height = plot_height_batch, units = "in", dpi = plot_dpi_batch, bg = "white"
+                  plot = plot_obj_gene, device = publication_device(plot_format_batch),
+                  width = plot_width_batch, height = plot_height_batch, units = "cm", dpi = plot_dpi_batch, bg = "white"
                 )
                 plot_files <- c(plot_files, plot_filename)
               },
@@ -1355,15 +1315,15 @@ create_sgrna_batch_download_handler <- function(input, output, sgrna_plot_batch_
       })
 
       if (length(plot_files) > 0) {
-        output$sgrna_paired_plot_batch_status <- renderPrint({
+        output$sgrna_paired_plot_batch_status <- renderText({
           paste0("Generated ", length(plot_files), " / ", num_genes, " plots. Compressing...")
         })
         zip::zip(zipfile = file, files = plot_files, mode = "cherry-pick")
-        output$sgrna_paired_plot_batch_status <- renderPrint({
+        output$sgrna_paired_plot_batch_status <- renderText({
           paste0("ZIP created with ", length(plot_files), " plots. Download complete.")
         })
       } else {
-        output$sgrna_paired_plot_batch_status <- renderPrint({
+        output$sgrna_paired_plot_batch_status <- renderText({
           "Error: Failed to generate any plots for compression."
         })
         file.create(file)
@@ -1373,14 +1333,11 @@ create_sgrna_batch_download_handler <- function(input, output, sgrna_plot_batch_
   )
 }
 
-# --- GSEA Plot Observers & Downloaders ---
-
-# GSEA Lollipop Plot Observer
 observe_gsea_lollipop_plot_generation <- function(input, output, session, gsea_results, gsea_lollipop_plot_object, gsea_lollipop_plot_params_for_download) {
   observeEvent(input$run_gsea_lollipop_plot, {
     req(gsea_results(), input$gsea_lollipop_result_type, input$gsea_lollipop_num_pathways)
 
-    output$gsea_lollipop_plot_status <- renderPrint({
+    output$gsea_lollipop_plot_status <- renderText({
       "Generating GSEA Lollipop Plot..."
     })
     gsea_lollipop_plot_object(NULL)
@@ -1399,13 +1356,12 @@ observe_gsea_lollipop_plot_generation <- function(input, output, session, gsea_r
       gsea_df_to_plot <- gsea_res_list$gsea_results_negative_df
       analysis_label_for_plot <- "Negative Score"
     } else {
-      output$gsea_lollipop_plot_status <- renderPrint({
+      output$gsea_lollipop_plot_status <- renderText({
         "Error: Selected GSEA result data not found."
       })
       return()
     }
 
-    # Validate color inputs
     hex_inputs <- c(input$gsea_lollipop_bar_low, input$gsea_lollipop_bar_high, input$gsea_lollipop_circle_low, input$gsea_lollipop_circle_high)
     hex_labels <- c("Bar Low Color", "Bar High Color", "Circle Low Color", "Circle High Color")
 
@@ -1429,26 +1385,25 @@ observe_gsea_lollipop_plot_generation <- function(input, output, session, gsea_r
         )
         gsea_lollipop_plot_object(plot_obj)
         gsea_lollipop_plot_params_for_download(list(title = input$gsea_lollipop_title, type = analysis_label_for_plot))
-        output$gsea_lollipop_plot_status <- renderPrint({
+        output$gsea_lollipop_plot_status <- renderText({
           paste0("GSEA Lollipop Plot (", analysis_label_for_plot, ") generated. ", Sys.time())
         })
         shinyjs::show("gsea_lollipop_plot_download_options")
-        updateTabsetPanel(session, "main_results_tabs", selected = "GSEA Lollipop Plot")
+        navigate_workspace(session, "GSEA Lollipop Plot")
       },
       error = function(e) {
         error_msg_gsea_lollipop <- paste("Error generating GSEA Lollipop Plot:\n", e$message)
-        output$gsea_lollipop_plot_status <- renderPrint({
+        output$gsea_lollipop_plot_status <- renderText({
           error_msg_gsea_lollipop
         })
         gsea_lollipop_plot_object(NULL)
-        showModal(modalDialog(title = "GSEA Lollipop Plot Generation Failed", HTML(paste0("Error Details: <br><pre style='white-space: pre-wrap;'>", e$message, "</pre>"))))
+        show_inline_message(paste("GSEA Lollipop Plot Generation Failed:", e$message), type = "error")
       }
     )
   })
 }
 
-# GSEA Lollipop Download Handler
-create_gsea_lollipop_download_handler <- function(input, gsea_lollipop_plot_object, gsea_lollipop_plot_params_for_download) {
+create_gsea_lollipop_download_handler <- function(input, gsea_lollipop_plot_object, gsea_lollipop_plot_params_for_download, dimensions) {
   downloadHandler(
     filename = function() {
       req(gsea_lollipop_plot_params_for_download())
@@ -1458,40 +1413,27 @@ create_gsea_lollipop_download_handler <- function(input, gsea_lollipop_plot_obje
       paste0("GSEA_LollipopPlot_", safe_type, "_", safe_title, "_", format(Sys.time(), "%Y_%m_%d_%H%M%S"), ".", input$gsea_lollipop_download_format)
     },
     content = function(file) {
-      req(gsea_lollipop_plot_object(), input$gsea_lollipop_download_width, input$gsea_lollipop_download_height)
+      req(gsea_lollipop_plot_object(), dimensions()$width, dimensions()$height)
       plot_obj_to_save <- gsea_lollipop_plot_object()
-      width_in <- input$gsea_lollipop_download_width
-      height_in <- input$gsea_lollipop_download_height
-      dpi_val <- if (input$gsea_lollipop_download_format == "png") input$gsea_lollipop_download_dpi else 300
+      width_cm <- dimensions()$width
+      height_cm <- dimensions()$height
+      dpi_val <- if (input$gsea_lollipop_download_format == "png") dimensions()$dpi else 300
 
-      # Dynamic height adjustment
-      if (!is.null(plot_obj_to_save) && inherits(plot_obj_to_save, "ggplot") && !is.null(plot_obj_to_save$data)) {
-        num_pathways_in_plot <- length(unique(plot_obj_to_save$data$DescriptionWrapped))
-        if (num_pathways_in_plot > 0) {
-          plot_base_height_dl <- 4
-          height_per_pathway_dl <- 0.45
-          dynamic_height <- plot_base_height_dl + (num_pathways_in_plot * height_per_pathway_dl)
-          height_in <- max(5, min(dynamic_height, 30))
-        }
-      }
 
       ggsave(file,
-        plot = plot_obj_to_save, device = input$gsea_lollipop_download_format,
-        width = width_in, height = height_in, units = "in", dpi = dpi_val, bg = "white"
+        plot = plot_obj_to_save, device = publication_device(input$gsea_lollipop_download_format),
+        width = width_cm, height = height_cm, units = "cm", dpi = dpi_val, bg = "white"
       )
     }
   )
 }
 
-# GSEA Enrichment Plot Observer
 observe_gsea_enrichment_plot_generation <- function(input, output, session, gsea_results, gsea_enrichment_plot_object, gsea_enrichment_plot_params_for_download, gsea_enrichment_selected_pathway_id) {
-  # Update pathway color UI
   output$pathway_color_inputs <- renderUI({
     req(input$gsea_enrichment_plot_pathway_selector)
     render_pathway_color_inputs(input$gsea_enrichment_plot_pathway_selector)
   })
 
-  # Update highlight gene selector
   observeEvent(input$gsea_enrichment_plot_pathway_selector, {
     req(gsea_results(), input$gsea_enrichment_plot_result_type, input$gsea_enrichment_plot_pathway_selector)
 
@@ -1505,7 +1447,6 @@ observe_gsea_enrichment_plot_generation <- function(input, output, session, gsea
     }
 
     if (!is.null(s4_object_to_plot)) {
-      # Extract core genes from pathway
       selected_pathways <- input$gsea_enrichment_plot_pathway_selector
       all_core_genes <- c()
 
@@ -1518,16 +1459,13 @@ observe_gsea_enrichment_plot_generation <- function(input, output, session, gsea
             }
           },
           error = function(e) {
-            # Ignore error, continue processing other pathways
           }
         )
       }
 
-      # Deduplicate and sort
       all_core_genes <- unique(all_core_genes)
       all_core_genes <- sort(all_core_genes)
 
-      # Update selector
       updateSelectizeInput(session, "gsea_enrichment_highlight_genes",
         choices = all_core_genes,
         selected = NULL
@@ -1535,19 +1473,18 @@ observe_gsea_enrichment_plot_generation <- function(input, output, session, gsea
     }
   })
 
-  # Main Plot Generation Observer
   observeEvent(input$run_gsea_enrichment_plot, {
     req(gsea_results(), input$gsea_enrichment_plot_result_type, input$gsea_enrichment_plot_pathway_selector)
 
     selected_pathways <- input$gsea_enrichment_plot_pathway_selector
     if (is.null(selected_pathways) || length(selected_pathways) == 0) {
-      showNotification("Please select at least one pathway to plot.", type = "warning")
+      show_inline_message("Please select at least one pathway to plot.", type = "warning")
       return()
     }
 
     gsea_enrichment_selected_pathway_id(selected_pathways)
 
-    output$gsea_enrichment_plot_status <- renderPrint({
+    output$gsea_enrichment_plot_status <- renderText({
       "Generating GSEA Pathway Enrichment Plot..."
     })
     gsea_enrichment_plot_object(NULL)
@@ -1561,46 +1498,38 @@ observe_gsea_enrichment_plot_generation <- function(input, output, session, gsea
     } else if (input$gsea_enrichment_plot_result_type == "negative") {
       s4_object_to_plot <- gsea_res_list$gsea_object_negative
     } else {
-      output$gsea_enrichment_plot_status <- renderPrint({
+      output$gsea_enrichment_plot_status <- renderText({
         "Error: Invalid GSEA result type selected."
       })
       return()
     }
 
     if (is.null(s4_object_to_plot)) {
-      output$gsea_enrichment_plot_status <- renderPrint({
+      output$gsea_enrichment_plot_status <- renderText({
         "Error: S4 Object not found for selected GSEA result type."
       })
       return()
     }
 
-    # Collect pathway colors (only if multiple pathways selected)
     pathway_colors <- NULL
     if (length(selected_pathways) > 1) {
-      pathway_colors <- sapply(1:length(selected_pathways), function(i) {
+      pathway_colors <- sapply(seq_along(selected_pathways), function(i) {
         color_input_id <- paste0("pathway_color_", i)
         color_value <- input[[color_input_id]]
         if (is.null(color_value) || color_value == "") {
-          # Use default colors if input is empty
-          if (length(selected_pathways) <= 8) {
-            RColorBrewer::brewer.pal(max(3, length(selected_pathways)), "Set2")[i]
-          } else {
-            rainbow(length(selected_pathways))[i]
-          }
+          atop_pathway_colors(length(selected_pathways))[i]
         } else {
           color_value
         }
       })
 
-      # Validate color inputs
       invalid_colors <- !grepl("^#[0-9A-Fa-f]{6}$", pathway_colors)
       if (any(invalid_colors)) {
-        showNotification("Invalid hex code in pathway colors. Please check settings.", type = "error")
+        show_inline_message("Invalid hex code in pathway colors. Please check settings.", type = "error")
         return()
       }
     }
 
-    # Get highlight genes
     highlighted_genes <- NULL
     if (isTRUE(input$gsea_enrichment_enable_gene_highlight) &&
       !is.null(input$gsea_enrichment_highlight_genes) &&
@@ -1608,8 +1537,7 @@ observe_gsea_enrichment_plot_generation <- function(input, output, session, gsea
       highlighted_genes <- input$gsea_enrichment_highlight_genes
     }
 
-    # Fixed highlight colors
-    highlight_colors <- c("#0E6DB3", "#BB1E38") # Blue and Red
+    highlight_colors <- c("#104e8b", "#b22222")
 
     tryCatch(
       {
@@ -1634,8 +1562,8 @@ observe_gsea_enrichment_plot_generation <- function(input, output, session, gsea
           colors = pathway_colors,
           highlight_genes = highlighted_genes,
           highlight_colors = highlight_colors,
-          prefix = paste0("GSEA_", input$gsea_enrichment_plot_result_type), # Added prefix
-          pathway_desc = if (length(selected_pathways) == 1) selected_pathways[1] else "Multiple_Pathways" # Added pathway_desc
+          prefix = paste0("GSEA_", input$gsea_enrichment_plot_result_type),
+          pathway_desc = if (length(selected_pathways) == 1) selected_pathways[1] else "Multiple_Pathways"
         ))
 
         pathway_count <- length(selected_pathways)
@@ -1647,50 +1575,42 @@ observe_gsea_enrichment_plot_generation <- function(input, output, session, gsea
         }
         status_msg <- paste0(status_msg, ") - ", Sys.time())
 
-        output$gsea_enrichment_plot_status <- renderPrint({
+        output$gsea_enrichment_plot_status <- renderText({
           status_msg
         })
         shinyjs::show("gsea_enrichment_plot_download_options")
-        updateTabsetPanel(session, "main_results_tabs", selected = "GSEA Enrichment Plot")
+        navigate_workspace(session, "GSEA Enrichment Plot")
       },
       error = function(e) {
         error_msg_gsea_enrich <- paste("Error generating GSEA Pathway Enrichment Plot:\n", e$message)
-        output$gsea_enrichment_plot_status <- renderPrint({
+        output$gsea_enrichment_plot_status <- renderText({
           error_msg_gsea_enrich
         })
         gsea_enrichment_plot_object(NULL)
-        showModal(modalDialog(
-          title = "GSEA Pathway Plot Failed",
-          HTML(paste0("Error Details: <br><pre style='white-space: pre-wrap;'>", e$message, "</pre>"))
-        ))
+        show_inline_message(paste("GSEA Pathway Plot Failed:", e$message), type = "error")
       }
     )
   })
 }
 
-# --- Main Analysis Observers ---
-
-# GSEA Analysis Observer
 observe_gsea_analysis <- function(input, output, session, data_processing_results, gsea_results) {
   observeEvent(input$run_gsea_analysis, {
     req(input$gmt_file_upload)
 
-    # Use processed data
     req(data_processing_results())
     req(data_processing_results()$params$gene_col)
     gene_summary_data_for_gsea <- data_processing_results()$gene_summary_data
     gene_id_col_for_gsea <- data_processing_results()$params$gene_col
 
-    # Validate data
     if (is.null(gene_summary_data_for_gsea) || nrow(gene_summary_data_for_gsea) == 0) {
-      showModal(modalDialog(title = "Error", "Data source empty. Please check data loading."))
+      show_inline_message("Data source empty. Please check data loading.", type = "error")
       return()
     }
 
     gsea_start_abs_val <- 0.51
-    withProgress(message = "Running GSEA...", value = 0.5, session = session, {
+    withProgress(message = "Running GSEA...", min = 0.5, max = 1, value = 0.5, session = session, {
       shiny::setProgress(value = gsea_start_abs_val, detail = "Initializing GSEA...", message = "Running GSEA...")
-      output$status_output_gsea <- renderPrint({
+      output$status_output_gsea <- renderText({
         "Running GSEA... (using processed data)"
       })
       gsea_results(NULL)
@@ -1714,10 +1634,9 @@ observe_gsea_analysis <- function(input, output, session, data_processing_result
           )
           gsea_results(gsea_res_list)
 
-          # --- Tick 1: Immediate Updates (Status, Progress, Tab Switch) ---
           shiny::setProgress(1.0, message = "GSEA Completed!", detail = "Rendering results...")
 
-          output$status_output_gsea <- renderPrint({
+          output$status_output_gsea <- renderText({
             paste0(
               "GSEA Completed (using processed data)\n",
               "Number of Genes: ", nrow(gene_summary_data_for_gsea), "\n",
@@ -1725,52 +1644,28 @@ observe_gsea_analysis <- function(input, output, session, data_processing_result
             )
           })
 
-          # Switch tab immediately
-          updateTabsetPanel(session, "main_results_tabs", selected = "GSEA Analysis Results")
+          navigate_workspace(session, "Pathway Results")
 
-          # --- Tick 2: Render Results Table (Delayed 100ms) ---
           later::later(function() {
             output$gsea_results_display_ui <- renderUI({
               render_gsea_results_tables_ui(gsea_res_list)
             })
           }, delay = 0.1)
 
-          # --- Tick 3: Render Lollipop Params (Delayed 200ms) ---
-          later::later(function() {
-            output$gsea_lollipop_params_ui_placeholder <- renderUI({
-              render_gsea_lollipop_params_ui(gsea_res_list)
-            })
-          }, delay = 0.2)
-
-          # --- Tick 4: Render Enrichment Params UI (Delayed 300ms) ---
-          later::later(function() {
-            output$gsea_enrichment_plot_params_ui_placeholder <- renderUI({
-              render_gsea_enrichment_params_ui(gsea_res_list)
-            })
-          }, delay = 0.3)
-
-          # --- Tick 5: Render sgRNA Paired Params UI (Delayed 400ms) ---
-          later::later(function() {
-            output$sgrna_paired_plot_params_ui_placeholder <- renderUI({
-              results <- data_processing_results()
-              render_sgrna_params_ui_with_gsea(results, gsea_res_list)
-            })
-          }, delay = 0.4)
         },
         error = function(e) {
-          output$status_output_gsea <- renderPrint({
+          output$status_output_gsea <- renderText({
             paste("GSEA Failed:", e$message)
           })
           gsea_results(NULL)
-          showModal(modalDialog(title = "GSEA Failed", HTML(paste0("Error Details: <br><pre style='white-space: pre-wrap;'>", e$message, "</pre>"))))
+          show_inline_message(paste("GSEA Failed:", e$message), type = "error")
         }
       )
     })
   })
 }
 
-# GSEA Enrichment Download Handler
-create_gsea_enrichment_download_handler <- function(input, gsea_enrichment_plot_object, gsea_enrichment_plot_params_for_download) {
+create_gsea_enrichment_download_handler <- function(input, gsea_enrichment_plot_object, gsea_enrichment_plot_params_for_download, dimensions) {
   downloadHandler(
     filename = function() {
       req(gsea_enrichment_plot_params_for_download())
@@ -1781,19 +1676,16 @@ create_gsea_enrichment_download_handler <- function(input, gsea_enrichment_plot_
       paste0(safe_prefix, "_", safe_desc, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", input$gsea_enrichment_download_format)
     },
     content = function(file) {
-      req(gsea_enrichment_plot_object(), input$gsea_enrichment_download_width, input$gsea_enrichment_download_height)
+      req(gsea_enrichment_plot_object(), dimensions()$width, dimensions()$height)
       ggsave(file,
-        plot = gsea_enrichment_plot_object(), device = input$gsea_enrichment_download_format,
-        width = input$gsea_enrichment_download_width, height = input$gsea_enrichment_download_height,
-        units = "in", dpi = if (input$gsea_enrichment_download_format == "png") input$gsea_enrichment_download_dpi else 300, bg = "white"
+        plot = gsea_enrichment_plot_object(), device = publication_device(input$gsea_enrichment_download_format),
+        width = dimensions()$width, height = dimensions()$height,
+        units = "cm", dpi = if (input$gsea_enrichment_download_format == "png") dimensions()$dpi else 300, bg = "white"
       )
     }
   )
 }
 
-# --- Selector Update Observers ---
-
-# GSEA Pathway Selector Observer
 observe_gsea_enrichment_pathway_selector_update <- function(input, session, gsea_results) {
   observeEvent(input$gsea_enrichment_plot_result_type,
     {
@@ -1831,7 +1723,6 @@ observe_gsea_enrichment_pathway_selector_update <- function(input, session, gsea
   )
 }
 
-# sgRNA GSEA Type Selector Observer
 observe_sgrna_gsea_type_selector_update <- function(input, session, gsea_results) {
   observeEvent(input$sgrna_paired_gsea_type_selector,
     {
@@ -1869,7 +1760,6 @@ observe_sgrna_gsea_type_selector_update <- function(input, session, gsea_results
   )
 }
 
-# sgRNA Pathway Selector Observer
 observe_sgrna_pathway_selector_update <- function(input, session, gsea_results, data_processing_results) {
   observeEvent(input$sgrna_paired_pathway_selector,
     {
@@ -1930,72 +1820,13 @@ observe_sgrna_pathway_selector_update <- function(input, session, gsea_results, 
   )
 }
 
-
-
-# --- Tab Switching Observer for Sidebar Visibility ---
-observe_tab_switching <- function(input, session) {
-  observeEvent(input$main_results_tabs, {
-    req(input$main_results_tabs)
-    tab <- input$main_results_tabs
-
-    # Hide all first
-    shinyjs::hide("data_processing_params_box")
-    shinyjs::hide("gsea_parameters_section")
-    shinyjs::hide("gsea_lollipop_params_box")
-    shinyjs::hide("gsea_enrichment_plot_params_box")
-    shinyjs::hide("sgrna_paired_plot_params_box")
-    shinyjs::hide("gene_vis_params_box")
-
-    # Show based on tab
-    if (tab == "Data Processing Output") {
-      shinyjs::show("data_processing_params_box")
-    } else if (tab == "GSEA Analysis Results") {
-      shinyjs::show("gsea_parameters_section")
-    } else if (tab == "GSEA Lollipop Plot") {
-      shinyjs::show("gsea_lollipop_params_box")
-    } else if (tab == "GSEA Enrichment Plot") {
-      shinyjs::show("gsea_enrichment_plot_params_box")
-    } else if (tab == "sgRNA Paired Plot") {
-      shinyjs::show("sgrna_paired_plot_params_box")
-    } else if (tab == "Gene Visualization") {
-      shinyjs::show("gene_vis_params_box")
-    }
-  })
-}
-
-# --- Server-Side Selectize Updaters ---
-
-# Updater for sgRNA Paired Gene Selector (Direct)
-observe_sgrna_gene_selector_update <- function(input, session, data_processing_results) {
-  observe({
-    req(data_processing_results())
-    gene_summary <- data_processing_results()$gene_summary_data
-    gene_col <- data_processing_results()$params$gene_col
-    req(gene_summary, gene_col)
-
-    all_genes <- unique(gene_summary[[gene_col]])
-
-    # Update for both basic and GSEA-aware UIs (they use same ID if rendered dynamically, but logic handles availability)
-    updateSelectizeInput(session, "sgrna_paired_gene_selector_direct",
-      choices = all_genes,
-      server = TRUE
-    )
-  })
-}
-
-# Updater for Gene Vis Volcano Labels
-observe_gene_vis_labels_update <- function(input, session, data_processing_results) {
-  observe({
-    req(data_processing_results())
-    gene_summary <- data_processing_results()$gene_summary_data
-    gene_col <- data_processing_results()$params$gene_col
-    req(gene_summary, gene_col)
-
-    all_genes <- unique(gene_summary[[gene_col]])
-
-    updateSelectizeInput(session, "gene_vis_volcano_labels",
-      choices = all_genes,
-      server = TRUE
-    )
+observe_gene_search <- function(input, session, results, id) {
+  observeEvent(list(results(), input[[paste0(id, "_ready")]]), {
+    req(results(), input[[paste0(id, "_ready")]])
+    genes <- sort(unique(as.character(results()$gene_summary_data[[results()$params$gene_col]])))
+    genes <- genes[!is.na(genes) & nzchar(genes)]
+    selected <- intersect(isolate(input[[id]]), genes)
+    updateSelectizeInput(session, id, choices = genes, selected = selected,
+      options = list(maxOptions = 100, loadThrottle = 250), server = TRUE)
   })
 }

@@ -19,202 +19,243 @@
 
 
 #include <Rcpp.h>
-#include <vector>
-#include <random>
 #include <algorithm>
-#include <numeric>
-#include <unordered_map>
-#include <string>
-#include <iomanip>
+#include <atomic>
 #include <cmath>
+#include <cstdint>
+#include <exception>
+#include <mutex>
+#include <numeric>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
 
 using namespace Rcpp;
 
-/**
- * CRISPR Screen Permutation Test C++ Engine
- * Implementation identical to R algorithm
- * 
- * Core Features:
- * - Adaptive Top-N strategy: Top-k where k = ceil(2n/3)
- * - Positive (Top-K High) and Negative (Top-K Low) scoring
- * - Multi-threaded parallel calculation
- * - Memory-efficient data structures
- * - 100% consistent results with R algorithm
- */
+// [[Rcpp::plugins(cpp17)]]
 
-/**
- * Calculate Top-N Mean Score
- * @param scores Vector of scores
- * @param is_positive If true, use Descending sort (Top High). If false, Ascending (Top Low).
- * @param min_sgrna_threshold Minimum number of sgRNAs required per gene
- */
-double calculate_topk_mean(std::vector<double>& scores, bool is_positive, int min_sgrna_threshold = 3) {
-    int n = scores.size();
-    
-    if (n < min_sgrna_threshold) {
-        return R_NaN;
-    }
-    
-    // Calculate k = ceil(2n/3)
-    // Using 2.0 to ensure floating point division
-    int k = std::ceil(2.0 * n / 3.0);
-    
-    // Sort
-    if (is_positive) {
-        // Descending for Positive Score (Highest LFCs)
-        std::sort(scores.begin(), scores.end(), std::greater<double>());
-    } else {
-        // Ascending for Negative Score (Lowest LFCs)
-        std::sort(scores.begin(), scores.end());
-    }
-    
-    // Calculate mean of Top-k
-    double sum = 0.0;
-    for (int i = 0; i < k; i++) {
-        sum += scores[i];
-    }
-    
-    return sum / k;
+namespace {
+
+struct ScorePair {
+    double positive;
+    double negative;
+};
+
+struct PermutationWorkspace {
+    std::vector<int> shuffled_gene_indices;
+    std::vector<std::size_t> cursors;
+    std::vector<double> grouped_scores;
+
+    PermutationWorkspace(std::size_t n_sgrnas, std::size_t n_genes)
+        : shuffled_gene_indices(n_sgrnas),
+          cursors(n_genes),
+          grouped_scores(n_sgrnas) {}
+};
+
+std::uint64_t splitmix64(std::uint64_t value) {
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31U);
 }
 
-/**
- * Calculate Observed Gene Scores (Both Positive and Negative)
- */
+std::uint64_t bounded_random(std::mt19937_64& rng, std::uint64_t bound) {
+    const std::uint64_t threshold = static_cast<std::uint64_t>(-bound) % bound;
+    while (true) {
+        const std::uint64_t value = rng();
+        if (value >= threshold) {
+            return value % bound;
+        }
+    }
+}
+
+void deterministic_shuffle(std::vector<int>& values, std::mt19937_64& rng) {
+    for (std::size_t remaining = values.size(); remaining > 1; --remaining) {
+        const std::size_t selected = static_cast<std::size_t>(bounded_random(rng, remaining));
+        std::swap(values[remaining - 1], values[selected]);
+    }
+}
+
+template <typename Iterator>
+ScorePair calculate_score_pair(Iterator begin, Iterator end) {
+    const std::size_t n = static_cast<std::size_t>(std::distance(begin, end));
+    std::sort(begin, end);
+    const std::size_t k = (2U * n + 2U) / 3U;
+
+    double negative_sum = 0.0;
+    for (std::size_t index = 0; index < k; ++index) {
+        negative_sum += *(begin + static_cast<std::ptrdiff_t>(index));
+    }
+
+    double positive_sum = 0.0;
+    for (std::size_t index = 0; index < k; ++index) {
+        positive_sum += *(end - 1 - static_cast<std::ptrdiff_t>(index));
+    }
+
+    return {
+        positive_sum / static_cast<double>(k),
+        negative_sum / static_cast<double>(k)
+    };
+}
+
+int resolve_thread_count(int requested_threads, int n_permutations) {
+    unsigned int available = std::thread::hardware_concurrency();
+    if (available == 0U) {
+        available = 1U;
+    }
+
+    int resolved = requested_threads;
+    if (resolved <= 0) {
+        resolved = available > 1U ? static_cast<int>(available - 1U) : 1;
+    }
+
+    resolved = std::max(1, resolved);
+    resolved = std::min(resolved, n_permutations);
+    resolved = std::min(resolved, static_cast<int>(available));
+    return resolved;
+}
+
+std::vector<std::size_t> build_offsets(
+    const std::vector<int>& gene_indices,
+    int n_genes
+) {
+    std::vector<std::size_t> offsets(static_cast<std::size_t>(n_genes) + 1U, 0U);
+    for (int gene_index : gene_indices) {
+        ++offsets[static_cast<std::size_t>(gene_index) + 1U];
+    }
+    std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
+    return offsets;
+}
+
+void group_scores(
+    const std::vector<double>& diff_scores,
+    const std::vector<int>& gene_indices,
+    const std::vector<std::size_t>& offsets,
+    PermutationWorkspace& workspace
+) {
+    std::copy(offsets.begin(), offsets.end() - 1, workspace.cursors.begin());
+    for (std::size_t index = 0; index < gene_indices.size(); ++index) {
+        const std::size_t gene_index = static_cast<std::size_t>(gene_indices[index]);
+        workspace.grouped_scores[workspace.cursors[gene_index]++] = diff_scores[index];
+    }
+}
+
+std::vector<int> map_gene_indices(
+    const StringVector& gene_labels,
+    const StringVector& unique_genes
+) {
+    std::unordered_map<std::string, int> gene_to_index;
+    gene_to_index.reserve(static_cast<std::size_t>(unique_genes.size()));
+
+    for (R_xlen_t index = 0; index < unique_genes.size(); ++index) {
+        if (StringVector::is_na(unique_genes[index])) {
+            stop("unique_genes must not contain missing values");
+        }
+        const std::string gene = as<std::string>(unique_genes[index]);
+        const auto inserted = gene_to_index.emplace(gene, static_cast<int>(index));
+        if (!inserted.second) {
+            stop("unique_genes contains duplicate gene names");
+        }
+    }
+
+    std::vector<int> gene_indices(static_cast<std::size_t>(gene_labels.size()));
+    for (R_xlen_t index = 0; index < gene_labels.size(); ++index) {
+        if (StringVector::is_na(gene_labels[index])) {
+            stop("gene_labels must not contain missing values");
+        }
+        const std::string gene = as<std::string>(gene_labels[index]);
+        const auto match = gene_to_index.find(gene);
+        if (match == gene_to_index.end()) {
+            stop("gene_labels contains a gene absent from unique_genes: " + gene);
+        }
+        gene_indices[static_cast<std::size_t>(index)] = match->second;
+    }
+
+    return gene_indices;
+}
+
+List calculate_observed_scores(
+    const std::vector<double>& diff_scores,
+    const std::vector<int>& gene_indices,
+    const StringVector& unique_genes,
+    int min_sgrna_threshold
+) {
+    const int n_genes = unique_genes.size();
+    const std::vector<std::size_t> offsets = build_offsets(gene_indices, n_genes);
+    PermutationWorkspace workspace(diff_scores.size(), static_cast<std::size_t>(n_genes));
+    group_scores(diff_scores, gene_indices, offsets, workspace);
+
+    NumericVector observed_positive(n_genes, R_NaN);
+    NumericVector observed_negative(n_genes, R_NaN);
+    LogicalVector valid_genes(n_genes, false);
+    int valid_gene_count = 0;
+
+    for (int gene_index = 0; gene_index < n_genes; ++gene_index) {
+        const std::size_t begin_index = offsets[static_cast<std::size_t>(gene_index)];
+        const std::size_t end_index = offsets[static_cast<std::size_t>(gene_index) + 1U];
+        if (end_index - begin_index < static_cast<std::size_t>(min_sgrna_threshold)) {
+            continue;
+        }
+
+        const ScorePair scores = calculate_score_pair(
+            workspace.grouped_scores.begin() + static_cast<std::ptrdiff_t>(begin_index),
+            workspace.grouped_scores.begin() + static_cast<std::ptrdiff_t>(end_index)
+        );
+        observed_positive[gene_index] = scores.positive;
+        observed_negative[gene_index] = scores.negative;
+        valid_genes[gene_index] = true;
+        ++valid_gene_count;
+    }
+
+    return List::create(
+        Named("observed_positive_scores") = observed_positive,
+        Named("observed_negative_scores") = observed_negative,
+        Named("valid_genes") = valid_genes,
+        Named("n_valid_genes") = valid_gene_count,
+        Named("offsets") = wrap(offsets)
+    );
+}
+
+}
+
 // [[Rcpp::export]]
 List calculate_observed_scores_cpp(
     NumericVector diff_scores,
     StringVector gene_labels,
-    StringVector unique_genes
+    StringVector unique_genes,
+    int min_sgrna_threshold = 3
 ) {
-    
-    int n_sgrnas = diff_scores.size();
-    int n_genes = unique_genes.size();
-    
-    // Create mapping from gene to index
-    std::unordered_map<std::string, int> gene_to_idx;
-    for (int i = 0; i < n_genes; i++) {
-        gene_to_idx[as<std::string>(unique_genes[i])] = i;
+    if (diff_scores.size() != gene_labels.size()) {
+        stop("diff_scores and gene_labels must have the same length");
     }
-    
-    // Collect sgRNA scores for each gene
-    std::vector<std::vector<double>> gene_scores(n_genes);
-    
-    for (int i = 0; i < n_sgrnas; i++) {
-        std::string gene = as<std::string>(gene_labels[i]);
-        auto it = gene_to_idx.find(gene);
-        if (it != gene_to_idx.end()) {
-            gene_scores[it->second].push_back(diff_scores[i]);
-        }
-    }
-    
-    // Calculate observed scores
-    NumericVector observed_pos(n_genes);
-    NumericVector observed_neg(n_genes);
-    
-    for (int i = 0; i < n_genes; i++) {
-        if (gene_scores[i].size() >= 3) {  // Only calculate for genes with >= 3 sgRNAs (will be parameterized)
-            // Copy vector for separate sorting
-            std::vector<double> scores_pos = gene_scores[i];
-            std::vector<double> scores_neg = gene_scores[i];
-            
-            observed_pos[i] = calculate_topk_mean(scores_pos, true, 3);
-            observed_neg[i] = calculate_topk_mean(scores_neg, false, 3);
-        } else {
-            observed_pos[i] = R_NaN;
-            observed_neg[i] = R_NaN;
-        }
+    if (min_sgrna_threshold < 1) {
+        stop("min_sgrna_threshold must be at least 1");
     }
 
+    const std::vector<double> scores = as<std::vector<double>>(diff_scores);
+    for (double score : scores) {
+        if (!std::isfinite(score)) {
+            stop("diff_scores must contain only finite values");
+        }
+    }
+    const std::vector<int> gene_indices = map_gene_indices(gene_labels, unique_genes);
+    const List observed = calculate_observed_scores(
+        scores,
+        gene_indices,
+        unique_genes,
+        min_sgrna_threshold
+    );
+
     return List::create(
-        Named("observed_pos_scores") = observed_pos,
-        Named("observed_neg_scores") = observed_neg,
+        Named("observed_pos_scores") = observed["observed_positive_scores"],
+        Named("observed_neg_scores") = observed["observed_negative_scores"],
         Named("gene_names") = unique_genes
     );
 }
 
-/**
- * Perform Permutation Test with Progress Tracking
- * Returning separate matrices for Positive and Negative scores
- */
-List perform_single_permutation_cpp(
-    const std::vector<double>& diff_scores,
-    const std::vector<int>& gene_indices,
-    int n_genes,
-    int n_permutations,
-    int min_sgrna_threshold = 3,
-    int seed = 42,
-    bool show_progress = true
-) {
-    
-    // Create random number generator
-    std::mt19937 rng(seed);
-    
-    // Create result matrices
-    NumericMatrix perm_pos_matrix(n_genes, n_permutations);
-    NumericMatrix perm_neg_matrix(n_genes, n_permutations);
-    
-    std::fill(perm_pos_matrix.begin(), perm_pos_matrix.end(), R_NaN);
-    std::fill(perm_neg_matrix.begin(), perm_neg_matrix.end(), R_NaN);
-    
-    // Progress tracking parameters
-    int progress_interval = std::max(1, n_permutations / 100);  // Report every 1%
-    if (n_permutations < 100) {
-        progress_interval = std::max(1, n_permutations / 10);   // Report every 10% if < 100 permutations
-    }
-    
-    for (int perm_idx = 0; perm_idx < n_permutations; perm_idx++) {
-        
-        // Shuffle gene labels
-        std::vector<int> shuffled_indices = gene_indices;
-        std::shuffle(shuffled_indices.begin(), shuffled_indices.end(), rng);
-        
-        // Regroup sgRNAs by shuffled genes
-        std::vector<std::vector<double>> temp_gene_scores(n_genes);
-        
-        for (int sgrna_idx = 0; sgrna_idx < (int)shuffled_indices.size(); sgrna_idx++) {
-            int shuffled_gene_id = shuffled_indices[sgrna_idx];
-            if (shuffled_gene_id >= 0 && shuffled_gene_id < n_genes) {
-                temp_gene_scores[shuffled_gene_id].push_back(diff_scores[sgrna_idx]);
-            }
-        }
-        
-        // Calculate scores for shuffled genes
-        for (int gene_idx = 0; gene_idx < n_genes; gene_idx++) {
-            if (temp_gene_scores[gene_idx].size() >= (size_t)min_sgrna_threshold) {
-                // We need separate vectors for sorting if pass by ref, 
-                // OR modify helper to take by value, 
-                // OR just copy. Since vector is small (~4-10 items usually), copy is cheap.
-                std::vector<double> scores_copy_pos = temp_gene_scores[gene_idx];
-                std::vector<double> scores_copy_neg = temp_gene_scores[gene_idx];
-                
-                perm_pos_matrix(gene_idx, perm_idx) = calculate_topk_mean(scores_copy_pos, true, min_sgrna_threshold);
-                perm_neg_matrix(gene_idx, perm_idx) = calculate_topk_mean(scores_copy_neg, false, min_sgrna_threshold);
-            } else {
-                perm_pos_matrix(gene_idx, perm_idx) = R_NaN;
-                perm_neg_matrix(gene_idx, perm_idx) = R_NaN;
-            }
-        }
-        
-        // Progress report
-        if (show_progress && (perm_idx + 1) % progress_interval == 0) {
-            double progress_percent = ((double)(perm_idx + 1) / n_permutations) * 100.0;
-            Rcout << "Permutation Test: " << (perm_idx + 1) << "/" << n_permutations 
-                  << " (" << std::fixed << std::setprecision(1) << progress_percent << "%)" << std::endl;
-            
-            // Allow R interrupt
-            Rcpp::checkUserInterrupt();
-        }
-    }
-    
-    return List::create(
-        Named("perm_pos_matrix") = perm_pos_matrix,
-        Named("perm_neg_matrix") = perm_neg_matrix
-    );
-}
-
-/**
- * C++ Permutation Test Main Function (Simple Version)
- */
 // [[Rcpp::export]]
 List perform_cpp_permutation_test(
     NumericVector diff_scores,
@@ -223,136 +264,203 @@ List perform_cpp_permutation_test(
     int n_permutations = 1000,
     int min_sgrna_threshold = 3,
     int seed = 42,
-    bool show_progress = true
+    bool show_progress = true,
+    int n_threads = 0,
+    int permutation_offset = 0
 ) {
-    
-    int n_sgrnas = diff_scores.size();
-    int n_genes = unique_genes.size();
-    
-    // Create gene to index map
-    std::unordered_map<std::string, int> gene_to_idx;
-    for (int i = 0; i < n_genes; i++) {
-        gene_to_idx[as<std::string>(unique_genes[i])] = i;
+    if (diff_scores.size() != gene_labels.size()) {
+        stop("diff_scores and gene_labels must have the same length");
     }
-    
-    // Create gene index vector
-    std::vector<int> gene_indices(n_sgrnas);
-    std::vector<std::vector<int>> gene_sgrna_map(n_genes);
-    
-    for (int i = 0; i < n_sgrnas; i++) {
-        std::string gene = as<std::string>(gene_labels[i]);
-        auto it = gene_to_idx.find(gene);
-        if (it != gene_to_idx.end()) {
-            gene_indices[i] = it->second;
-            gene_sgrna_map[it->second].push_back(i);
-        } else {
-            gene_indices[i] = -1; // Invalid gene
-        }
+    if (diff_scores.size() == 0 || unique_genes.size() == 0) {
+        stop("permutation input must not be empty");
     }
-    
-    // Filter out genes with less than min_sgrna_threshold sgRNAs
-    std::vector<bool> valid_genes(n_genes, false);
-    int valid_gene_count = 0;
-    for (int i = 0; i < n_genes; i++) {
-        if (gene_sgrna_map[i].size() >= (size_t)min_sgrna_threshold) {
-            valid_genes[i] = true;
-            valid_gene_count++;
-        }
+    if (n_permutations < 1) {
+        stop("n_permutations must be at least 1");
+    }
+    if (min_sgrna_threshold < 1) {
+        stop("min_sgrna_threshold must be at least 1");
+    }
+    if (permutation_offset < 0) {
+        stop("permutation_offset must not be negative");
     }
 
-    // Calculate observed scores
-    NumericVector obs_pos(n_genes);
-    NumericVector obs_neg(n_genes);
-
-    for (int i = 0; i < n_genes; i++) {
-        if (valid_genes[i]) {
-            std::vector<double> scores;
-            for (int sgrna_idx : gene_sgrna_map[i]) {
-                scores.push_back(diff_scores[sgrna_idx]);
-            }
-            // Create copies for separate sorting
-            std::vector<double> s_pos = scores;
-            std::vector<double> s_neg = scores;
-            
-            obs_pos[i] = calculate_topk_mean(s_pos, true, min_sgrna_threshold);
-            obs_neg[i] = calculate_topk_mean(s_neg, false, min_sgrna_threshold);
-        } else {
-            obs_pos[i] = R_NaN;
-            obs_neg[i] = R_NaN;
+    const int n_genes = unique_genes.size();
+    const std::vector<double> scores = as<std::vector<double>>(diff_scores);
+    for (double score : scores) {
+        if (!std::isfinite(score)) {
+            stop("diff_scores must contain only finite values");
         }
     }
-    
-    // Convert to C++ standard types
-    std::vector<double> diff_scores_vec = as<std::vector<double>>(diff_scores);
-    
-    // Execute permutation test
-    List perm_results = perform_single_permutation_cpp(
-        diff_scores_vec,
+    const std::vector<int> gene_indices = map_gene_indices(gene_labels, unique_genes);
+    const std::vector<std::size_t> offsets = build_offsets(gene_indices, n_genes);
+    const List observed = calculate_observed_scores(
+        scores,
         gene_indices,
-        n_genes,
-        n_permutations,
-        min_sgrna_threshold,
-        seed,
-        show_progress
+        unique_genes,
+        min_sgrna_threshold
     );
-    
-    NumericMatrix perm_pos_matrix = perm_results["perm_pos_matrix"];
-    NumericMatrix perm_neg_matrix = perm_results["perm_neg_matrix"];
-    
-    // Calculate p-values
-    NumericVector p_positive(n_genes);
-    NumericVector p_negative(n_genes);
-    
-    for (int i = 0; i < n_genes; i++) {
-        if (valid_genes[i] && !ISNAN(obs_pos[i])) {
-            double op = obs_pos[i];
-            double on = obs_neg[i];
-            
-            int pos_count = 0;
-            int neg_count = 0;
-            int valid_perms_pos = 0;
-            int valid_perms_neg = 0;
-            
-            for (int j = 0; j < n_permutations; j++) {
-                // Positive P-value: Null >= Obs (Enrichment)
-                double null_p = perm_pos_matrix(i, j);
-                if (!ISNAN(null_p)) {
-                    valid_perms_pos++;
-                    if (null_p >= op) pos_count++;
-                }
 
-                // Negative P-value: Null <= Obs (Depletion)
-                double null_n = perm_neg_matrix(i, j);
-                if (!ISNAN(null_n)) {
-                    valid_perms_neg++;
-                    if (null_n <= on) neg_count++;
+    const NumericVector observed_positive = observed["observed_positive_scores"];
+    const NumericVector observed_negative = observed["observed_negative_scores"];
+    const LogicalVector valid_genes_r = observed["valid_genes"];
+    const int valid_gene_count = observed["n_valid_genes"];
+    const int resolved_threads = resolve_thread_count(n_threads, n_permutations);
+
+    std::vector<double> observed_positive_values(static_cast<std::size_t>(n_genes));
+    std::vector<double> observed_negative_values(static_cast<std::size_t>(n_genes));
+    std::vector<unsigned char> valid_genes(static_cast<std::size_t>(n_genes), 0U);
+    for (int gene_index = 0; gene_index < n_genes; ++gene_index) {
+        observed_positive_values[static_cast<std::size_t>(gene_index)] = observed_positive[gene_index];
+        observed_negative_values[static_cast<std::size_t>(gene_index)] = observed_negative[gene_index];
+        valid_genes[static_cast<std::size_t>(gene_index)] = valid_genes_r[gene_index] ? 1U : 0U;
+    }
+
+    std::vector<std::vector<std::uint64_t>> positive_counts(
+        static_cast<std::size_t>(resolved_threads),
+        std::vector<std::uint64_t>(static_cast<std::size_t>(n_genes), 0U)
+    );
+    std::vector<std::vector<std::uint64_t>> negative_counts(
+        static_cast<std::size_t>(resolved_threads),
+        std::vector<std::uint64_t>(static_cast<std::size_t>(n_genes), 0U)
+    );
+
+    std::atomic<bool> cancelled(false);
+    std::exception_ptr worker_error;
+    std::mutex error_mutex;
+
+    const auto worker = [&](int thread_index) {
+        try {
+            PermutationWorkspace workspace(scores.size(), static_cast<std::size_t>(n_genes));
+            std::vector<std::uint64_t>& local_positive = positive_counts[static_cast<std::size_t>(thread_index)];
+            std::vector<std::uint64_t>& local_negative = negative_counts[static_cast<std::size_t>(thread_index)];
+            const int begin_permutation = static_cast<int>(static_cast<std::int64_t>(n_permutations) * thread_index / resolved_threads);
+            const int end_permutation = static_cast<int>(static_cast<std::int64_t>(n_permutations) * (thread_index + 1) / resolved_threads);
+
+            for (int local_permutation = begin_permutation;
+                 local_permutation < end_permutation && !cancelled.load(std::memory_order_relaxed);
+                 ++local_permutation) {
+                std::copy(
+                    gene_indices.begin(),
+                    gene_indices.end(),
+                    workspace.shuffled_gene_indices.begin()
+                );
+
+                const std::uint64_t global_permutation = static_cast<std::uint64_t>(permutation_offset) +
+                    static_cast<std::uint64_t>(local_permutation);
+                const std::uint64_t base_seed = static_cast<std::uint64_t>(
+                    static_cast<std::uint32_t>(seed)
+                );
+                std::mt19937_64 rng(splitmix64(base_seed ^ splitmix64(global_permutation)));
+                deterministic_shuffle(workspace.shuffled_gene_indices, rng);
+                group_scores(scores, workspace.shuffled_gene_indices, offsets, workspace);
+
+                for (int gene_index = 0; gene_index < n_genes; ++gene_index) {
+                    if (!valid_genes[static_cast<std::size_t>(gene_index)]) {
+                        continue;
+                    }
+
+                    const std::size_t begin_index = offsets[static_cast<std::size_t>(gene_index)];
+                    const std::size_t end_index = offsets[static_cast<std::size_t>(gene_index) + 1U];
+                    const ScorePair permutation_scores = calculate_score_pair(
+                        workspace.grouped_scores.begin() + static_cast<std::ptrdiff_t>(begin_index),
+                        workspace.grouped_scores.begin() + static_cast<std::ptrdiff_t>(end_index)
+                    );
+
+                    if (permutation_scores.positive >= observed_positive_values[static_cast<std::size_t>(gene_index)]) {
+                        ++local_positive[static_cast<std::size_t>(gene_index)];
+                    }
+                    if (permutation_scores.negative <= observed_negative_values[static_cast<std::size_t>(gene_index)]) {
+                        ++local_negative[static_cast<std::size_t>(gene_index)];
+                    }
                 }
             }
-            
-            if (valid_perms_pos > 0) {
-                p_positive[i] = (double)(pos_count + 1) / (valid_perms_pos + 1);
-            } else {
-                p_positive[i] = 1.0;
+        } catch (...) {
+            cancelled.store(true, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(error_mutex);
+            if (!worker_error) {
+                worker_error = std::current_exception();
             }
+        }
+    };
 
-            if (valid_perms_neg > 0) {
-                p_negative[i] = (double)(neg_count + 1) / (valid_perms_neg + 1);
-            } else {
-                p_negative[i] = 1.0;
+    if (show_progress) {
+        Rcout << "Permutation Test: 0/" << n_permutations
+              << " using " << resolved_threads << " C++ thread(s)" << std::endl;
+    }
+    checkUserInterrupt();
+
+    if (resolved_threads == 1) {
+        worker(0);
+    } else {
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<std::size_t>(resolved_threads));
+        try {
+            for (int thread_index = 0; thread_index < resolved_threads; ++thread_index) {
+                workers.emplace_back(worker, thread_index);
             }
-            
-        } else {
-            p_positive[i] = R_NaN;
-            p_negative[i] = R_NaN;
+        } catch (...) {
+            cancelled.store(true, std::memory_order_relaxed);
+            for (std::thread& thread : workers) {
+                thread.join();
+            }
+            throw;
+        }
+        for (std::thread& thread : workers) {
+            thread.join();
         }
     }
-    
+
+    if (worker_error) {
+        std::rethrow_exception(worker_error);
+    }
+    checkUserInterrupt();
+
+    NumericVector p_positive(n_genes, R_NaN);
+    NumericVector p_negative(n_genes, R_NaN);
+    NumericVector positive_extreme_counts(n_genes, 0.0);
+    NumericVector negative_extreme_counts(n_genes, 0.0);
+    NumericVector valid_permutation_counts(n_genes, 0.0);
+
+    for (int gene_index = 0; gene_index < n_genes; ++gene_index) {
+        if (!valid_genes[static_cast<std::size_t>(gene_index)]) {
+            continue;
+        }
+
+        std::uint64_t positive_total = 0U;
+        std::uint64_t negative_total = 0U;
+        for (int thread_index = 0; thread_index < resolved_threads; ++thread_index) {
+            positive_total += positive_counts[static_cast<std::size_t>(thread_index)][static_cast<std::size_t>(gene_index)];
+            negative_total += negative_counts[static_cast<std::size_t>(thread_index)][static_cast<std::size_t>(gene_index)];
+        }
+
+        positive_extreme_counts[gene_index] = static_cast<double>(positive_total);
+        negative_extreme_counts[gene_index] = static_cast<double>(negative_total);
+        valid_permutation_counts[gene_index] = static_cast<double>(n_permutations);
+        p_positive[gene_index] = static_cast<double>(positive_total + 1U) /
+            (static_cast<double>(n_permutations) + 1.0);
+        p_negative[gene_index] = static_cast<double>(negative_total + 1U) /
+            (static_cast<double>(n_permutations) + 1.0);
+    }
+
+    if (show_progress) {
+        Rcout << "Permutation Test: " << n_permutations << "/" << n_permutations
+              << " completed" << std::endl;
+    }
+
     return List::create(
         Named("P_positive") = p_positive,
         Named("P_negative") = p_negative,
-        Named("observed_scores") = obs_pos, // Return Positive scores by default for backward compat
+        Named("observed_scores") = observed_positive,
+        Named("observed_positive_scores") = observed_positive,
+        Named("observed_negative_scores") = observed_negative,
+        Named("positive_extreme_counts") = positive_extreme_counts,
+        Named("negative_extreme_counts") = negative_extreme_counts,
+        Named("valid_permutation_counts") = valid_permutation_counts,
         Named("n_valid_genes") = valid_gene_count,
         Named("n_permutations") = n_permutations,
+        Named("n_threads") = resolved_threads,
+        Named("seed") = seed,
+        Named("permutation_offset") = permutation_offset,
         Named("gene_names") = unique_genes
     );
 }

@@ -1,4 +1,4 @@
-# Verify C++ Compilation
+
 source("R/interface/cpp_permutation_interface.R")
 
 cat("Attempting to compile C++ engine...\n")

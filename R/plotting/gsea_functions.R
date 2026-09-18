@@ -17,19 +17,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
-# gsea_functions.R
-# GSEA Analysis Functions Collection
-
-# --- GSEA Analysis Function ---
 prepare_ranked_gene_list_gsea <- function(df, score_column, gene_id_col, progress_callback) {
-    # Filter out NA values
-    df_filtered <- df[!is.na(df[[score_column]]) & !is.na(df[[gene_id_col]]), ]
+    df_filtered <- df[is.finite(df[[score_column]]) & !is.na(df[[gene_id_col]]), ]
     if (nrow(df_filtered) == 0) {
         return(NULL)
     }
 
-    # Handle duplicate gene IDs: select the score with the largest absolute value
     if (any(duplicated(df_filtered[[gene_id_col]]))) {
         df_filtered <- df_filtered %>%
             group_by(!!sym(gene_id_col)) %>%
@@ -37,19 +30,15 @@ prepare_ranked_gene_list_gsea <- function(df, score_column, gene_id_col, progres
             ungroup()
     }
 
-    # Create named gene score vector
     gene_list_vector <- df_filtered[[score_column]]
     names(gene_list_vector) <- df_filtered[[gene_id_col]]
 
-    # Remove any remaining NA values
     gene_list_vector <- gene_list_vector[!is.na(names(gene_list_vector)) & !is.na(gene_list_vector)]
 
     if (length(gene_list_vector) == 0) {
         return(NULL)
     }
 
-
-    # Sort by score in descending order directly
     sorted_gene_list <- sort(gene_list_vector, decreasing = TRUE)
 
     return(sorted_gene_list)
@@ -92,23 +81,14 @@ perform_gsea_analysis_clusterProfiler_shiny <- function(gene_summary_df,
         error = function(e) stop(paste("Error reading GMT file:", e$message))
     )
 
-    # Validate required columns exist
     if (!gene_id_column %in% names(gene_summary_df)) stop(paste("Gene ID column '", gene_id_column, "' not found in gene summary."))
     if (!"GenePositiveScore" %in% names(gene_summary_df)) stop("'GenePositiveScore' not found in gene summary.")
     if (!"GeneNegativeScore" %in% names(gene_summary_df)) stop("'GeneNegativeScore' not found in gene summary.")
 
-    # Silently validate data (do not show detail)
-    pos_scores <- gene_summary_df$GenePositiveScore[!is.na(gene_summary_df$GenePositiveScore)]
-    neg_scores <- gene_summary_df$GeneNegativeScore[!is.na(gene_summary_df$GeneNegativeScore)]
-
     gsea_progress_msg("Preparing gene lists for GSEA analysis...", val_increment_abs = gsea_step_unit)
 
-    # Use GenePositiveScore for positive GSEA analysis
-    # High scores will be at the top of the ranked list, indicating promoting effects
     gene_list_positive <- prepare_ranked_gene_list_gsea(gene_summary_df, "GenePositiveScore", gene_id_column, gsea_progress_msg)
 
-    # Use GeneNegativeScore for negative GSEA analysis
-    # Raw scores are used directly for GSEA, negative values indicate inhibitory effects
     gene_list_negative <- prepare_ranked_gene_list_gsea(gene_summary_df, "GeneNegativeScore", gene_id_column, gsea_progress_msg)
 
     run_single_gsea_shiny <- function(gene_list, term2gene, score_type_label) {
@@ -122,24 +102,24 @@ perform_gsea_analysis_clusterProfiler_shiny <- function(gene_summary_df,
             }
             gsea_s4_result <- tryCatch(
                 {
-                    GSEA(
+                    clusterProfiler::GSEA(
                         geneList = gene_list,
                         TERM2GENE = term2gene,
                         minGSSize = clp_min_gene_set_size,
                         maxGSSize = max_gene_set_size,
                         pvalueCutoff = clp_pvalue_cutoff,
-                        nPermSimple = clp_n_permutations, # Changed from nPerm to nPermSimple based on common use with fgsea
+                        nPermSimple = clp_n_permutations,
                         verbose = FALSE,
                         seed = seed_to_use,
                         by = clp_by
                     )
                 },
                 error = function(e) {
-                    return(list(table = data.frame(), object = NULL)) # Ensure list structure on error
+                    stop("GSEA failed for ", score_type_label, ": ", conditionMessage(e))
                 }
             )
         } else {
-            return(list(table = data.frame(), object = NULL)) # Ensure list structure if skipped
+            return(list(table = data.frame(), object = NULL))
         }
         gsea_progress_msg(paste("GSEA for", score_type_label, "completed."), val_increment_abs = gsea_step_unit * 0.5)
         if (is.null(gsea_s4_result) || nrow(as.data.frame(gsea_s4_result)) == 0) {
@@ -149,10 +129,8 @@ perform_gsea_analysis_clusterProfiler_shiny <- function(gene_summary_df,
         }
     }
 
-    # Run GSEA analysis based on GenePositiveScore
     results_positive <- run_single_gsea_shiny(gene_list_positive, term2gene_df, "GenePositiveScore")
 
-    # Run GSEA analysis based on GeneNegativeScore
     results_negative <- run_single_gsea_shiny(gene_list_negative, term2gene_df, "GeneNegativeScore")
 
     gsea_progress_msg("GSEA analysis function completed.")
@@ -162,7 +140,7 @@ perform_gsea_analysis_clusterProfiler_shiny <- function(gene_summary_df,
         gsea_results_negative_df = results_negative$table,
         gsea_object_positive = results_positive$object,
         gsea_object_negative = results_negative$object,
-        gene_list_positive = gene_list_positive, # Return raw gene list
-        gene_list_negative = gene_list_negative # Return raw gene list
+        gene_list_positive = gene_list_positive,
+        gene_list_negative = gene_list_negative
     ))
 }

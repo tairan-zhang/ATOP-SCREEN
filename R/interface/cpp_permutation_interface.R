@@ -17,298 +17,149 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
-# C++ Permutation Engine - R Interface
-# Rcpp implementation
-
-#' Check and install necessary packages
 setup_cpp_environment <- function() {
-    required_packages <- c("Rcpp", "RcppParallel")
-
-    for (pkg in required_packages) {
-        if (!requireNamespace(pkg, quietly = TRUE)) {
-            cat(paste("Installing", pkg, "package...\n"))
-            tryCatch(
-                {
-                    install.packages(pkg, dependencies = TRUE)
-                    cat(paste(pkg, "installed successfully\n"))
-                },
-                error = function(e) {
-                    stop(paste("Failed to install", pkg, ":", e$message))
-                }
-            )
-        }
+    if (!requireNamespace("Rcpp", quietly = TRUE)) {
+        stop("Install Rcpp using scripts/install_dependencies.R.")
     }
-
-    # Load packages
-    library(Rcpp)
-    library(RcppParallel)
-
-    cat("C++ environment setup complete\n")
-    return(TRUE)
+    TRUE
 }
 
-#' Compile C++ Engine
 compile_cpp_engine <- function() {
-    # Check if C++ source file exists
-    cpp_file <- "src/cpp_permutation_engine.cpp"
-    if (!file.exists(cpp_file)) {
-        stop("C++ source file not found: ", cpp_file)
-    }
-
-    cat("Compiling C++ Permutation Engine...\n")
-
-    tryCatch(
-        {
-            # Compile C++ code using Rcpp (suppress verbose output)
-            suppressMessages({
-                capture.output(
-                    {
-                        Rcpp::sourceCpp(cpp_file, verbose = FALSE, rebuild = TRUE)
-                    },
-                    type = "output"
-                )
-            })
-
-            # Wait for compilation to complete
-            Sys.sleep(1)
-
-            # Verify if function is available
-            if (exists("perform_cpp_permutation_test")) {
-                cat("C++ Engine compiled successfully\n")
-
-                return(TRUE)
-            } else {
-                stop("Function not available after compilation")
-            }
-        },
-        error = function(e) {
-            cat("C++ Engine compilation failed:", e$message, "\n")
-            return(FALSE)
-        }
-    )
+    tryCatch({
+        setup_cpp_environment()
+        Rcpp::sourceCpp(
+            "src/cpp_permutation_engine.cpp",
+            env = environment(compile_cpp_engine),
+            verbose = FALSE
+        )
+        TRUE
+    }, error = function(e) {
+        message("C++ compilation failed: ", conditionMessage(e))
+        FALSE
+    })
 }
 
-#' System Configuration Detection
-detect_system_config <- function() {
-    # Detect CPU cores
-    n_cores <- parallel::detectCores()
-    recommended_threads <- max(1, n_cores - 1)
-
-    # Detect Memory
-    memory_info <- tryCatch(
-        {
-            if (Sys.info()["sysname"] == "Darwin") {
-                # macOS
-                memory_bytes <- as.numeric(system("sysctl -n hw.memsize", intern = TRUE))
-                memory_gb <- round(memory_bytes / 1024^3, 1)
-            } else {
-                # Default assumption: 8GB
-                memory_gb <- 8
-            }
-            memory_gb
-        },
-        error = function(e) 8
-    )
-
-    cat("System Configuration:\n")
-    cat(paste("  • CPU Cores:", n_cores, "\n"))
-    cat(paste("  • Recommended Threads:", recommended_threads, "\n"))
-    cat(paste("  • Memory:", memory_info, "GB\n"))
-
-    return(list(
-        n_cores = n_cores,
-        optimal_threads = recommended_threads,
-        memory_gb = memory_info
-    ))
-}
-
-#' C++ Permutation Test Main Function
-#' Identical to R algorithm but with significant performance improvement
-perform_cpp_permutation <- function(
-    sgrna_data,
-    gene_summary_data = NULL,
-    gene_col = "Gene",
-    score_col = "diff_score",
-    n_permutations = 1000,
-    min_sgrna_threshold = 3,
-    n_threads = 0,
-    progress_callback = NULL) {
-    if (!is.null(progress_callback)) {
-        progress_callback("Starting C++ Permutation Engine...")
-    }
-
-    # Detect system configuration
-    sys_config <- detect_system_config()
-
-    if (n_threads <= 0) {
-        n_threads <- sys_config$optimal_threads
-    }
-
-    if (!is.null(progress_callback)) {
-        progress_callback(paste0("Using ", n_threads, " threads for parallel calculation"))
-    }
-
-    # Data Preprocessing
-    if (!is.null(progress_callback)) {
-        progress_callback("Preprocessing data...")
-    }
-
-    # Extract necessary columns
-    if (!gene_col %in% colnames(sgrna_data)) {
-        stop("Gene column not found: ", gene_col)
-    }
-    if (!score_col %in% colnames(sgrna_data)) {
-        stop("Score column not found: ", score_col)
-    }
-
-    # Filter valid data
-    valid_rows <- !is.na(sgrna_data[[gene_col]]) &
-        !is.na(sgrna_data[[score_col]]) &
-        is.finite(sgrna_data[[score_col]])
-
-    if (sum(valid_rows) == 0) {
-        stop("No valid data rows")
-    }
-
-    clean_data <- sgrna_data[valid_rows, ]
-
-    # Filter genes with sgRNA count >= min_sgrna_threshold
-    gene_counts <- table(clean_data[[gene_col]])
-    valid_genes <- names(gene_counts)[gene_counts >= min_sgrna_threshold]
-
-    if (length(valid_genes) == 0) {
-        stop(paste0("No genes meet the condition (sgRNA count >= ", min_sgrna_threshold, ")"))
-    }
-
-    final_data <- clean_data[clean_data[[gene_col]] %in% valid_genes, ]
-
-    if (!is.null(progress_callback)) {
-        progress_callback(paste("Data preparation complete:", nrow(final_data), "sgRNAs,", length(valid_genes), "genes"))
-    }
-
-    # Prepare C++ input data
-    diff_scores <- as.numeric(final_data[[score_col]])
-    gene_labels <- as.character(final_data[[gene_col]])
-    unique_genes <- sort(unique(gene_labels))
-
-    if (!is.null(progress_callback)) {
-        progress_callback(paste("Executing", n_permutations, "permutations..."))
-    }
-
-    # Execute C++ Permutation Test
-    start_time <- Sys.time()
-
-    # Generate random seed
-    seed <- sample(.Machine$integer.max, 1)
-
-    cpp_results <- tryCatch(
-        {
-            perform_cpp_permutation_test(
-                diff_scores = diff_scores,
-                gene_labels = gene_labels,
-                unique_genes = unique_genes,
-                n_permutations = n_permutations,
-                min_sgrna_threshold = min_sgrna_threshold,
-                seed = seed,
-                show_progress = !is.null(progress_callback) # Show progress if callback provided
-            )
-        },
-        error = function(e) {
-            if (!is.null(progress_callback)) {
-                progress_callback(paste("C++ Calculation Failed:", e$message))
-            }
-            stop("C++ Permutation test failed: ", e$message)
-        }
-    )
-
-    end_time <- Sys.time()
-    elapsed_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-
-    if (!is.null(progress_callback)) {
-        progress_callback(paste("Permutation test completed, time:", round(elapsed_time, 2), "seconds"))
-        progress_callback(paste("Performance:", cpp_results$n_valid_genes, "genes,", cpp_results$n_permutations, "permutations"))
-    }
-
-    # If gene_summary_data is provided, match p-values by gene name
-    if (!is.null(gene_summary_data)) {
-        gene_summary_genes <- gene_summary_data[[gene_col]]
-        n_summary_genes <- length(gene_summary_genes)
-
-        # Initialize p-value vectors
-        matched_p_positive <- rep(NA_real_, n_summary_genes)
-        matched_p_negative <- rep(NA_real_, n_summary_genes)
-
-        # Create result mapping
-        result_map <- setNames(1:length(cpp_results$gene_names), cpp_results$gene_names)
-
-        # Match by gene name
-        for (i in 1:n_summary_genes) {
-            gene_name <- gene_summary_genes[i]
-            if (!is.na(gene_name) && gene_name %in% names(result_map)) {
-                result_idx <- result_map[gene_name]
-                matched_p_positive[i] <- cpp_results$P_positive[result_idx]
-                matched_p_negative[i] <- cpp_results$P_negative[result_idx]
-            }
-        }
-
-        return(list(
-            P_positive = matched_p_positive,
-            P_negative = matched_p_negative,
-            elapsed_time = elapsed_time,
-            n_threads = 1, # Simplified version does not support multi-threading display
-            engine = "C++",
-            performance_stats = list(
-                n_valid_genes = cpp_results$n_valid_genes,
-                n_permutations = cpp_results$n_permutations,
-                speed = paste(round(n_permutations / elapsed_time), "perms/sec")
-            )
-        ))
-    } else {
-        return(list(
-            P_positive = cpp_results$P_positive,
-            P_negative = cpp_results$P_negative,
-            gene_names = cpp_results$gene_names,
-            elapsed_time = elapsed_time,
-            n_threads = 1, # Simplified version does not support multi-threading display
-            engine = "C++",
-            performance_stats = list(
-                n_valid_genes = cpp_results$n_valid_genes,
-                n_permutations = cpp_results$n_permutations,
-                speed = paste(round(n_permutations / elapsed_time), "perms/sec")
-            )
-        ))
-    }
-}
-
-#' Automatically Initialize C++ Engine
 initialize_cpp_engine <- function() {
-    cat("Initializing C++ Engine...\n")
+    if (exists("perform_cpp_permutation_test", mode = "function")) return(TRUE)
+    compile_cpp_engine()
+}
 
-    # First check if compiled
-    if (exists("perform_cpp_permutation_test")) {
-        cat("C++ Engine available, skipping compilation\n")
-        return(TRUE)
+validate_permutation_integer <- function(value, name, minimum = 1L) {
+    if (length(value) != 1L || !is.numeric(value) || !is.finite(value) ||
+        value != floor(value) || value < minimum || value > .Machine$integer.max) {
+        stop(name, " must be an integer between ", minimum, " and ", .Machine$integer.max)
     }
+    as.integer(value)
+}
 
-    # Step 1: Check and install packages
-    env_success <- tryCatch(
-        {
-            setup_cpp_environment()
-            TRUE
-        },
-        error = function(e) {
-            cat("Environment setup failed:", e$message, "\n")
-            FALSE
-        }
+resolve_permutation_threads <- function(n_threads = NULL, n_permutations = 1L) {
+    available <- parallel::detectCores()
+    if (length(available) != 1L || !is.finite(available)) available <- 1L
+    if (is.null(n_threads) || identical(n_threads, 0) || identical(n_threads, 0L)) {
+        n_threads <- max(1L, min(available - 1L, 8L))
+    }
+    n_threads <- validate_permutation_integer(n_threads, "n_threads")
+    as.integer(min(n_threads, available, n_permutations))
+}
+
+normalize_cpp_seed <- function(seed = NULL) {
+    if (is.null(seed)) return(sample.int(.Machine$integer.max, 1L))
+    validate_permutation_integer(seed, "seed", 0L)
+}
+
+prepare_cpp_permutation_data <- function(
+    sgrna_data, gene_col = "Gene", score_col = "diff_score", min_sgrna_threshold = 3L
+) {
+    min_sgrna_threshold <- validate_permutation_integer(min_sgrna_threshold, "min_sgrna_threshold")
+    data <- as.data.frame(sgrna_data)
+    if (!all(c(gene_col, score_col) %in% names(data))) stop("Gene or score column is missing.")
+    if (!is.numeric(data[[score_col]])) stop("Score column must be numeric.")
+    gene_labels <- as.character(data[[gene_col]])
+    valid_rows <- !is.na(gene_labels) & nzchar(trimws(gene_labels)) & is.finite(data[[score_col]])
+    data <- data[valid_rows, , drop = FALSE]
+    gene_labels <- gene_labels[valid_rows]
+    gene_counts <- table(gene_labels)
+    valid_genes <- names(gene_counts)[gene_counts >= min_sgrna_threshold]
+    if (!length(valid_genes)) stop("No genes have enough valid sgRNAs.")
+    keep <- gene_labels %in% valid_genes
+    list(
+        diff_scores = data[[score_col]][keep],
+        gene_labels = gene_labels[keep],
+        unique_genes = sort(valid_genes)
     )
+}
 
-    if (!env_success) {
-        return(FALSE)
+format_cpp_permutation_result <- function(result, gene_summary_data, gene_col, elapsed_time) {
+    indices <- seq_along(result$gene_names)
+    if (!is.null(gene_summary_data)) {
+        if (!gene_col %in% names(gene_summary_data)) stop("Gene column is missing from gene summary.")
+        indices <- match(as.character(gene_summary_data[[gene_col]]), result$gene_names)
+    }
+    list(
+        P_positive = result$P_positive[indices],
+        P_negative = result$P_negative[indices],
+        gene_names = result$gene_names[indices],
+        positive_extreme_counts = result$positive_extreme_counts[indices],
+        negative_extreme_counts = result$negative_extreme_counts[indices],
+        valid_permutation_counts = result$valid_permutation_counts[indices],
+        elapsed_time = elapsed_time,
+        n_threads = result$n_threads,
+        seed = result$seed,
+        engine = "C++17",
+        performance_stats = list(
+            n_valid_genes = result$n_valid_genes,
+            n_permutations = result$n_permutations,
+            speed = paste(round(result$n_permutations / max(elapsed_time, .Machine$double.eps)), "perms/sec")
+        )
+    )
+}
+
+perform_cpp_permutation <- function(
+    sgrna_data, gene_summary_data = NULL, gene_col = "Gene", score_col = "diff_score",
+    n_permutations = 1000L, min_sgrna_threshold = 3L, n_threads = NULL,
+    progress_callback = NULL, seed = NULL, batch_size = NULL
+) {
+    n_permutations <- validate_permutation_integer(n_permutations, "n_permutations")
+    prepared <- prepare_cpp_permutation_data(sgrna_data, gene_col, score_col, min_sgrna_threshold)
+    n_threads <- resolve_permutation_threads(n_threads, n_permutations)
+    seed <- normalize_cpp_seed(seed)
+    if (is.null(batch_size)) {
+        batch_size <- if (is.null(progress_callback)) n_permutations else max(100L, n_permutations %/% 20L)
+    }
+    batch_size <- validate_permutation_integer(batch_size, "batch_size")
+    if (!initialize_cpp_engine()) stop("C++ engine is unavailable.")
+
+    started <- proc.time()[["elapsed"]]
+    positive_counts <- negative_counts <- numeric(length(prepared$unique_genes))
+    completed <- 0L
+    while (completed < n_permutations) {
+        current_size <- min(batch_size, n_permutations - completed)
+        result <- perform_cpp_permutation_test(
+            diff_scores = prepared$diff_scores,
+            gene_labels = prepared$gene_labels,
+            unique_genes = prepared$unique_genes,
+            n_permutations = current_size,
+            min_sgrna_threshold = min_sgrna_threshold,
+            seed = seed,
+            show_progress = FALSE,
+            n_threads = n_threads,
+            permutation_offset = completed
+        )
+        positive_counts <- positive_counts + result$positive_extreme_counts
+        negative_counts <- negative_counts + result$negative_extreme_counts
+        completed <- completed + current_size
+        if (!is.null(progress_callback)) {
+            progress_callback(sprintf("Permutation Test: %d/%d (%.1f%%)", completed, n_permutations, 100 * completed / n_permutations))
+        }
     }
 
-    # Step 2: Compile C++ code
-    compile_success <- compile_cpp_engine()
-
-    return(compile_success)
+    # Apply the pseudocount once, after all batches have contributed raw counts.
+    result$P_positive <- (positive_counts + 1) / (as.double(n_permutations) + 1)
+    result$P_negative <- (negative_counts + 1) / (as.double(n_permutations) + 1)
+    result$positive_extreme_counts <- positive_counts
+    result$negative_extreme_counts <- negative_counts
+    result$valid_permutation_counts <- rep(n_permutations, length(positive_counts))
+    result$n_permutations <- n_permutations
+    result$n_threads <- min(n_threads, batch_size)
+    format_cpp_permutation_result(result, gene_summary_data, gene_col, proc.time()[["elapsed"]] - started)
 }
