@@ -17,231 +17,62 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-cat("CRISPR Screen Analysis System - Dependency Installer\n")
-cat("===========================================\n\n")
+source("scripts/dependencies.R")
 
-if (is.null(getOption("repos")) || is.na(getOption("repos")["CRAN"]) || getOption("repos")["CRAN"] == "@CRAN@") {
-    cat("  [BOOT] Setting default CRAN mirror (cloud.r-project.org)...\n")
-    r <- getOption("repos")
-    r["CRAN"] <- "https://cloud.r-project.org/"
-    options(repos = r)
+cat("ATOP-SCREEN dependency installer\n")
+options(timeout = max(600, getOption("timeout", 60)))
+repos <- getOption("repos")
+if (is.null(repos) || !"CRAN" %in% names(repos) || is.na(repos[["CRAN"]]) || repos[["CRAN"]] == "@CRAN@") {
+    repos <- c(CRAN = "https://cloud.r-project.org")
 }
+options(repos = repos)
 
-is_installed <- function(pkg) {
-    return(requireNamespace(pkg, quietly = TRUE))
-}
-
-r_version <- R.Version()$version.string
-cat("Current R Version:", r_version, "\n")
-
-if (as.numeric(R.Version()$major) < 4) {
-    stop("Requires R version 4.0.0 or higher, current version is too old")
-}
-
-cat("R version check passed\n\n")
-
-log_info <- function(msg) cat(sprintf("  [INFO] %s\n", msg))
-log_ok <- function(pkg) cat(sprintf("  [OK] %s\n", pkg))
-log_miss <- function(pkg) cat(sprintf("  [..] %s missing. Installing...\n", pkg))
-log_fail <- function(pkg, err = "") cat(sprintf("  [!!] %s FAILED. %s\n", pkg, err))
-
-install_if_missing <- function(packages, install_func = install.packages, desc = "Package") {
-    success_count <- 0
-    total_count <- length(packages)
-
-    cat(sprintf("> Checking %s dependencies (%d total)...\n", desc, total_count))
-
-    for (pkg in packages) {
-        if (!is_installed(pkg)) {
-            log_miss(pkg)
-            tryCatch(
-                {
-                    install_func(pkg, dependencies = TRUE)
-                    if (is_installed(pkg)) {
-                        log_ok(pkg)
-                        success_count <- success_count + 1
-                    } else {
-                        log_fail(pkg, "Verification failed")
-                    }
-                },
-                error = function(e) {
-                    log_fail(pkg, e$message)
-                }
-            )
-        } else {
-            log_ok(pkg)
-            success_count <- success_count + 1
-        }
-    }
-
-    if (success_count == total_count) {
-        cat(sprintf("> %s check/install complete. All OK.\n\n", desc))
-    } else {
-        cat(sprintf("> %s check/install incomplete. (%d/%d OK)\n\n", desc, success_count, total_count))
-    }
-
-    return(success_count == total_count)
-}
-
-cat("Step 1: Basic CRAN Packages\n")
-
-cran_packages <- c(
-
-    "shiny",
-    "shinyjs",
-
-    "readxl",
-    "dplyr",
-    "tibble",
-    "rlang",
-    "tidyr",
-    "stringr",
-
-    "DT",
-
-    "ggplot2",
-    "svglite",
-    "ggpubr",
-    "ggnewscale",
-    "patchwork",
-    "RColorBrewer",
-    "ggrepel",
-    "ggpp",
-
-    "parallel",
-    "data.table",
-
-    "Rcpp",
-
-    "zip",
-
-    "processx",
-    "later"
-)
-
-cran_success <- install_if_missing(cran_packages, desc = "CRAN Package")
-
-cat("Step 2: Bioconductor Packages\n")
-
-if (!is_installed("BiocManager")) {
-    log_miss("BiocManager")
-    install.packages("BiocManager")
-    if (!is_installed("BiocManager")) {
-        log_fail("BiocManager", "Critical failure: Could not bootstrap Bioconductor.")
-    } else {
-        log_ok("BiocManager")
+install_missing <- function(packages, installer) {
+    for (package in packages) {
+        if (package_ready(package)) next
+        cat("Installing", package, "\n")
+        tryCatch(installer(package), error = function(e) {
+            message("Installation failed for ", package, ": ", conditionMessage(e))
+        })
     }
 }
 
-bioc_packages <- c(
-    "clusterProfiler",
-    "enrichplot"
-)
+install_missing(dependency_groups$CRAN, function(package) {
+    install.packages(package, dependencies = NA)
+})
 
-bioc_install_func <- function(pkg, ...) {
-    BiocManager::install(pkg, ...)
-}
+bioc_missing <- dependency_groups$Bioconductor[
+    !vapply(dependency_groups$Bioconductor, package_ready, logical(1))]
+github_missing <- names(dependency_groups$GitHub)[
+    !vapply(names(dependency_groups$GitHub), package_ready, logical(1))]
 
-bioc_success <- install_if_missing(bioc_packages, bioc_install_func, "Bioconductor Package")
-
-cat("Step 3: Optional Enhanced Packages\n")
-
-optional_packages <- c(
-    "GseaVis"
-)
-
-optional_success <- TRUE
-cat(sprintf("> Checking Optional Packages (%d total)...\n", length(optional_packages)))
-
-for (pkg in optional_packages) {
-    if (!is_installed(pkg)) {
-        log_miss(pkg)
-        tryCatch(
-            {
-                install.packages(pkg, dependencies = TRUE)
-                if (is_installed(pkg)) {
-                    log_ok(pkg)
-                } else {
-                    log_info(paste(pkg, "optional install skipped/failed (non-critical)"))
-                }
-            },
-            error = function(e) {
-                log_info(paste(pkg, "optional install failed (non-critical):", e$message))
-            }
-        )
-    } else {
-        log_ok(pkg)
+if (length(bioc_missing) || length(github_missing)) {
+    install_missing("BiocManager", function(package) install.packages(package))
+    if (!requireNamespace("BiocManager", quietly = TRUE)) {
+        stop("BiocManager could not be installed. Check the installation log and rerun this script.", call. = FALSE)
     }
+    options(repos = BiocManager::repositories())
+    install_missing(bioc_missing, function(package) {
+        BiocManager::install(package, ask = FALSE, update = FALSE, dependencies = NA)
+    })
 }
-cat("\n")
 
-cat("Step 4: Validate Critical Components\n")
-
-critical_tests <- list(
-    "Shiny Framework" = "shiny",
-    "C++ Interface" = "Rcpp",
-    "Bioinformatics" = "clusterProfiler",
-    "Scientific Plotting" = "ggplot2",
-    "Fast Computing" = "data.table",
-    "Parallel Computing" = "parallel"
-)
-
-all_critical_ok <- TRUE
-for (test_name in names(critical_tests)) {
-    pkg <- critical_tests[[test_name]]
-    if (is_installed(pkg)) {
-        cat(sprintf("  [OK] %-20s (%s)\n", test_name, pkg))
-    } else {
-        cat(test_name, "validation failed\n")
-        all_critical_ok <- FALSE
+if (length(github_missing)) {
+    install_missing("remotes", function(package) install.packages(package))
+    if (!requireNamespace("remotes", quietly = TRUE)) {
+        stop("remotes could not be installed. Check the installation log and rerun this script.", call. = FALSE)
     }
+    install_missing(github_missing, function(package) {
+        remotes::install_github(dependency_groups$GitHub[[package]],
+            dependencies = NA, upgrade = "never", build_vignettes = FALSE)
+    })
 }
 
-cat("\nStep 5: System Environment Check\n")
-
-n_cores <- parallel::detectCores()
-cat("CPU Cores:", n_cores, "\n")
-
-if (Sys.info()["sysname"] == "Windows") {
-    memory_info <- "Requires extra tool to detect"
-} else if (Sys.info()["sysname"] == "Darwin") {
-    memory_gb <- tryCatch(
-        {
-            round(as.numeric(system("sysctl -n hw.memsize", intern = TRUE)) / 1024^3, 1)
-        },
-        error = function(e) "Unknown"
-    )
-    memory_info <- paste(memory_gb, "GB")
-} else {
-    memory_info <- "Linux System"
+missing <- check_packages()
+if (length(missing)) {
+    stop(paste("Installation incomplete:", paste(missing, collapse = ", "),
+               "\nReview the errors above and rerun in a fresh R session."), call. = FALSE)
 }
-cat("System Memory:", memory_info, "\n")
-
-cpp_available <- tryCatch(
-    {
-        system("R CMD config CXX", intern = TRUE)
-        TRUE
-    },
-    error = function(e) {
-        FALSE
-    }
-)
-
-if (cpp_available) {
-    cat("C++ Compiler: Available\n")
-} else {
-    cat("C++ Compiler: Not Available (Will use R engine)\n")
-}
-
-cat("\nInstallation Summary\n")
-cat("====================\n")
-
-if (cran_success && bioc_success && all_critical_ok) {
-    cat("  [OK] System Ready. All dependencies installed.\n")
-    cat("  [..] Usage: source('app.R')\n")
-} else {
-    cat("  [!!] System verification FAILED.\n")
-    cat("  [..] Please check network connection and try again.\n")
-}
-
-cat("\nScript Completed.\n")
+cat("All required R packages are available.\n")
+cat("Next: Rscript scripts/check_system.R\n")
+cat("MAGeCK, compiler toolchains and Arial are installed separately; see README.md.\n")

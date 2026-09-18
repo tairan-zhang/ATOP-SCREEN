@@ -6,16 +6,23 @@ ATOP-SCREEN is an integrated graphical user interface (GUI) platform for pooled 
 
 ## Quick start
 
-Requirements: R 4.0 or later and compatible R/Bioconductor packages. A C++ compiler enables the Rcpp permutation engine; an R fallback is available.
+Install a current release of [R](https://cran.r-project.org/) and Git. The application has been tested locally with R 4.6. Run the following commands in a terminal from the repository root.
 
 ```sh
 git clone https://github.com/tairan-zhang/ATOP-SCREEN.git
 cd ATOP-SCREEN
 Rscript scripts/install_dependencies.R
+Rscript scripts/check_system.R
 Rscript -e "shiny::runApp('.', launch.browser = TRUE)"
 ```
 
-For MAGeCK, install it separately and configure its executable path in the application or `config/mageck_path.txt`. GSEA enrichment curves require `GseaVis`. Install Arial on your system for consistent plot typography.
+The installer uses CRAN, the [Bioconductor release matched to your R version](https://bioconductor.org/install/), and the [official GseaVis GitHub repository](https://github.com/junjunlab/GseaVis) (version 0.1.1 or later). It installs required dependencies, including GseaVis's declared GitHub dependencies, and fails if any required package is missing or cannot load. Rerun it in a fresh R session after resolving an installation error. `requirements.txt` is a reference list, not a pip requirements file or a version lockfile.
+
+- **Build tools:** Source packages may need Rtools on Windows, Xcode Command Line Tools on macOS, or development compilers/libraries on Linux. The application's C++ engine can be checked with `Rscript scripts/verify_cpp_compilation.R`; analysis has an R fallback.
+- **MAGeCK (optional):** Install [MAGeCK](https://sourceforge.net/p/mageck/wiki/Home/) separately and set its executable path in the application or `config/mageck_path.txt`.
+- **Fonts and PDF:** Install Arial for consistent typography. PDF export uses Quartz on macOS and requires Cairo support in R on other systems.
+
+These system components are not installed by the R dependency script.
 
 ## Workflow
 
