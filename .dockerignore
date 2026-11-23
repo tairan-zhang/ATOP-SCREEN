@@ -1,0 +1,16 @@
+**
+!Dockerfile
+!renv.lock
+!packaging/
+!packaging/sources/
+!packaging/sources/**
+!packages/
+!packages/analysis-engine/
+!packages/analysis-engine/**
+!scripts/
+!scripts/restore-r-runtime.R
+!scripts/build-macos-cpp-engine.R
+!scripts/check-worker-designs.py
+!renv/
+!renv/cellar/
+!renv/cellar/**

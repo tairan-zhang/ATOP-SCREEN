@@ -1,0 +1,12 @@
+test_that("worker module registry targets the domain layout", {
+  worker_runtime <- testthat::test_path("..", "..", "inst", "worker", "modules", "runtime.R")
+  source_text <- paste(readLines(worker_runtime, warn = FALSE), collapse = "\n")
+  expect_match(source_text, 'R", "atop", "orchestrator.R')
+  expect_match(source_text, 'R", "permutation", "cpp", "interface.R')
+  expect_match(source_text, 'R", "plotting", "gsea", "running.R')
+  expect_match(source_text, 'R", "plotting", "gsea", "running_helpers.R')
+  expect_match(source_text, 'R", "plotting", "gsea", "running_gseavis.R')
+  expect_match(source_text, 'R", "plotting", "gsea", "running_style.R')
+  expect_match(source_text, 'R", "plotting", "common", "typography.R')
+  expect_false(grepl("plotting_functions\\.R", source_text, fixed = FALSE))
+})

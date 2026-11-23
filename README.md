@@ -1,53 +1,24 @@
 # ATOP-SCREEN
 
-**Version 0.0.1** · An R/Shiny application for pooled screen analysis.
+ATOP-SCREEN analyzes CRISPR screen count matrices on your Mac. It ranks genes for enrichment and depletion using Adaptive Top-N scoring and directional permutation tests. From a gene-level result, you can inspect individual sgRNA counts, compare MAGeCK RRA results, or explore pathways with GSEA.
 
-ATOP-SCREEN is an integrated graphical user interface (GUI) platform for pooled screen analysis based on the Adaptive Top-N aggregation algorithm. It integrates data processing, permutation-based significance testing, and interactive visualization within a unified workflow, linking gene-level scores to guide-level diagnostic evidence and pathway-level interpretation through Gene Set Enrichment Analysis (GSEA).
+**[Download ATOP-SCREEN for Mac (Apple silicon, DMG)](https://github.com/tairan-zhang/ATOP-SCREEN/releases/download/v0.1.3/ATOP-SCREEN-0.1.3-macos-arm64.dmg)** · [Installation and first analysis](docs/INSTALL.md) · [中文安装指南](docs/INSTALL.zh-CN.md)
 
-## Quick start
+Open the disk image, drag **ATOP SCREEN** to **Applications**, then open it from Applications. R, the analysis packages, MAGeCK and its Python runtime are included. The app runs locally and accepts your own count matrices and gene sets. The disk image is for Apple silicon Macs. For the first-launch macOS security prompt, see the [installation guide](docs/INSTALL.md#first-launch).
 
-Install a current release of [R](https://cran.r-project.org/) and Git. The application has been tested locally with R 4.6. Run the following commands in a terminal from the repository root.
+## Analyze a screen
 
-```sh
-git clone https://github.com/tairan-zhang/ATOP-SCREEN.git
-cd ATOP-SCREEN
-Rscript scripts/install_dependencies.R
-Rscript scripts/check_system.R
-Rscript -e "shiny::runApp('.', launch.browser = TRUE)"
-```
+1. Open a project and choose **Analyze counts**. Import a table with one row per sgRNA, a guide ID, a target gene and one raw-count column per sample.
+2. Select the endpoint and baseline columns. Use **Matched pairs** for known pairs, **Shared baseline** for several endpoints measured against a single starting sample, or **Ratio of group means** for independent groups, including unequal group sizes.
+3. Choose **Start analysis**. ATOP ranks the guide effects within each gene and averages the upper and lower two-thirds separately, rounding the retained count up. A guide-label permutation test and Benjamini–Hochberg adjustment are applied separately to each direction. An optional concordance filter (NCS) acts before ranking when replicate contrasts are available.
+4. Inspect the guide and gene tables or render a count, ranking or volcano plot. For pathway analysis, choose **Enrich pathways**, select a GMT file with identifiers matching the count table, and run GSEA. Figures export as SVG, PNG and PDF.
 
-The installer uses CRAN, the [Bioconductor release matched to your R version](https://bioconductor.org/install/), and the [official GseaVis GitHub repository](https://github.com/junjunlab/GseaVis) (version 0.1.1 or later). It installs required dependencies, including GseaVis's declared GitHub dependencies, and fails if any required package is missing or cannot load. Rerun it in a fresh R session after resolving an installation error. `requirements.txt` is a reference list, not a pip requirements file or a version lockfile.
+Try the [small example count matrix](packaging/container/example-counts.tsv) with `E1`, `E2` and `E3` as endpoints and `T0` as the shared baseline. The [A375 vemurafenib screen](https://raw.githubusercontent.com/tairan-zhang/ATOP-SCREEN/v0.1.3/test_data/A375_rawcount.txt) provides a paired example using `PLX7_R1`/`D7_R1` and `PLX7_R2`/`D7_R2`. [Shalem et al., Science (2014)](https://doi.org/10.1126/science.1247005)
 
-- **Build tools:** Source packages may need Rtools on Windows, Xcode Command Line Tools on macOS, or development compilers/libraries on Linux. The application's C++ engine can be checked with `Rscript scripts/verify_cpp_compilation.R`; analysis has an R fallback.
-- **MAGeCK (optional):** Install [MAGeCK](https://sourceforge.net/p/mageck/wiki/Home/) separately and set its executable path in the application or `config/mageck_path.txt`.
-- **Fonts and PDF:** Install Arial for consistent typography. PDF export uses Quartz on macOS and requires Cairo support in R on other systems.
+## Reproducing an analysis
 
-These system components are not installed by the R dependency script.
+Desktop **0.1.3** includes the **0.1.2** analysis engine, R **4.6.1**, Bioconductor **3.23** and MAGeCK **0.5.9.5**. Project settings record the sample mapping, guide filters, Top-N rule, permutation count, seed, engine and input checksum. Keep these settings with the count matrix to reproduce a run. See the [R lockfile](renv.lock), [runtime manifest](packaging/runtime-manifest.json) and [developer build instructions](docs/DEVELOPMENT.md).
 
-## Workflow
+## Source and licensing
 
-1. **Analysis:** Upload a count table (CSV, TSV, TXT or Excel), select gene/sgRNA identifiers and treatment/control columns, then run Screen analysis. Upload a GMT gene-set file to run GSEA.
-2. **Results:** Review and download sgRNA, gene and pathway tables.
-3. **Visualization:** Create paired sgRNA, volcano, gene-ranking, pathway lollipop and enrichment plots. Set dimensions in centimetres, select **Apply** to update the preview, and download the figure.
-
-## Example data
-
-- `test_data/A375_rawcount.txt`: A375 vemurafenib screen, PLX7 versus D7, from [Shalem et al., Science (2014)](https://doi.org/10.1126/science.1247005).
-- `test_data/c2.all.v2024.1.Hs.symbols.gmt`: MSigDB C2 gene sets for pathway enrichment.
-
-## Development
-
-`app.R` defines the application; `R/` contains analysis, plotting and server modules; `src/` contains the C++ permutation engine; `www/` contains interface assets.
-
-Run checks from the repository root:
-
-```sh
-Rscript scripts/test_permutation.R
-Rscript scripts/test_modules.R
-Rscript scripts/test_app.R
-Rscript scripts/test_figure_style.R
-```
-
-## License
-
-[GPL-3.0](LICENSE).
+The [R/C++ analysis engine](packages/analysis-engine), [Electron desktop process](electron) and [React interface](web/src) are included here. The engine declares GPL-3.0-or-later, and the desktop code carries its MIT notice. Third-party components retain their own notices. [GPL license](LICENSE) · [Desktop license](LICENSE-desktop)

@@ -1,0 +1,20 @@
+/* Application composition follows atop-ui's sidebar/resource (rounded-xl),
+   menu-row (rounded-lg) and segment-tab shapes, instead of Button's pill default.
+   This also covers controls rendered through modal/popover body portals. */
+:root {
+  --atop-control-radius: 8px;
+  --atop-row-radius: 12px;
+}
+
+body button.rounded-full,
+body a.rounded-full {
+  border-radius: var(--atop-control-radius);
+}
+
+body .rounded-full:has(> input:not([type=checkbox]):not([type=radio])) {
+  border-radius: var(--atop-control-radius);
+}
+
+body button.product-page-nav {
+  border-radius: var(--atop-row-radius);
+}

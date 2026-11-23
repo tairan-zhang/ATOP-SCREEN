@@ -1,0 +1,122 @@
+/* workbench composition; controls and animations come from atop-ui. */
+:root {
+  --background:#FFFFFF; --foreground:#0B0B0B; --card:#F5F5F5;
+  --card-foreground:#0B0B0B; --popover:#FFFFFF; --popover-foreground:#0B0B0B;
+  --muted-foreground:#777777; --border:#EDEDED; --border-strong:#DCDCDC;
+  --primary:#111111; --primary-foreground:#FFFFFF; --accent:#222222;
+  --accent-fg:#0B0B0B; --accent-foreground:#0B0B0B; --ring:#444444;
+  --secondary:#F5F5F5; --secondary-foreground:#0B0B0B; --muted:#EFEFEF;
+  --destructive:#444444; --danger:#444444;
+  --workspace-font-size:14px; --workspace-meta-size:calc(var(--workspace-font-size) - 1px);
+  --workspace-title-size:calc(var(--workspace-font-size) + 2px);
+  --workspace-sidebar:#FAFAFA; --workspace-message:#E8F3FE; --workspace-file:var(--foreground);
+  --workspace-header-height:48px; --chat-column-width:1024px;
+  --text-xs:var(--workspace-meta-size); --text-sm:var(--workspace-font-size); --text-base:var(--workspace-font-size);
+  --text-lg:var(--workspace-title-size); --text-xl:var(--workspace-title-size); --text-2xl:var(--workspace-title-size);
+  --glass-bg:rgb(255 255 255 / .8); --glass-border:var(--border);
+  --glass-strong-bg:rgb(255 255 255 / .94); --glass-thin-bg:rgb(255 255 255 / .7);
+  --gradient-bg:linear-gradient(135deg,#FFFFFF,#F5F5F5);
+  --gradient-accent:linear-gradient(90deg,#111111,#777777);
+  /* Status labels retain their words and symbols in the requested neutral theme. */
+  --color-emerald-400:#999999; --color-emerald-500:#777777; --color-emerald-600:#555555;
+  --color-amber-400:#999999; --color-amber-500:#777777; --color-amber-600:#555555;
+  --color-blue-400:#999999; --color-blue-500:#777777; --color-blue-600:#555555;
+  --color-rose-400:#999999; --color-rose-500:#777777; --color-rose-600:#555555;
+  color-scheme:light;
+}
+.dark {
+  --background:#151515; --foreground:#F2F2F2; --card:#1C1C1C;
+  --card-foreground:#F2F2F2; --popover:#1C1C1C; --popover-foreground:#F2F2F2;
+  --muted-foreground:#A2A2A2; --border:#2A2A2A; --border-strong:#3B3B3B;
+  --primary:#F2F2F2; --primary-foreground:#151515; --accent:#DDDDDD;
+  --accent-fg:#F2F2F2; --accent-foreground:#F2F2F2; --ring:#DDDDDD;
+  --secondary:#1C1C1C; --secondary-foreground:#F2F2F2; --muted:#2A2A2A;
+  --destructive:#CCCCCC; --danger:#CCCCCC;
+  --workspace-sidebar:#1A1A1A; --workspace-message:#20334B;
+  --glass-bg:rgb(28 28 28 / .8); --glass-strong-bg:rgb(28 28 28 / .94); --glass-thin-bg:rgb(21 21 21 / .7);
+  --gradient-bg:linear-gradient(135deg,#151515,#1C1C1C); --gradient-accent:linear-gradient(90deg,#BBBBBB,#EEEEEE);
+  color-scheme:dark;
+}
+html,body,#root { width:100%; height:100%; margin:0; overflow:hidden; }
+body { font-size:var(--workspace-font-size); line-height:1.5; background:var(--background); color:var(--foreground); }
+* { box-sizing:border-box; scrollbar-width:thin; scrollbar-color:var(--border-strong) transparent; }
+h1,h2,h3,p { margin:0; }
+h1,h2 { font-size:var(--workspace-title-size); font-weight:600; line-height:1.5; }
+h3 { font-size:var(--workspace-font-size); font-weight:500; }
+button,a,input,textarea,[role=slider] { -webkit-app-region:no-drag; }
+button,input,textarea,select { font-size:var(--workspace-font-size); }
+/* Normalize the library's fixed micro-label sizes alongside its public text tokens. */
+[class~="text-[10px]"],[class~="text-[11px]"],[class~="text-[12px]"] { font-size:var(--workspace-meta-size); }
+.atop-shell { width:100%; height:100dvh; min-height:0; overflow:hidden; }
+.workspace-main { min-height:0; height:100%; overflow:hidden; }
+.workspace-sidebar { height:100%; background:var(--workspace-sidebar); }
+.workspace-sidebar-header { gap:4px; padding:0 10px 6px; }
+.sidebar-brand { display:flex; align-items:center; justify-content:space-between; height:var(--workspace-header-height); padding:0 4px; -webkit-app-region:drag; }
+.sidebar-brand [data-slot=sidebar-trigger] { width:30px; height:30px; color:var(--muted-foreground); }
+.new-session-button { justify-content:flex-start; width:100%; height:34px; padding:0 10px; font-weight:500; }
+.sidebar-toolbar { display:flex; align-items:center; justify-content:space-between; gap:4px; padding:0 2px; }
+.sidebar-toolbar button { padding:0 8px; height:30px; }
+.workspace-session-list { gap:12px; padding:2px 8px 8px; }
+.workspace-sidebar [data-slot=sidebar-group] { padding:0; }
+.workspace-sidebar [data-slot=sidebar-group-label] { display:flex; align-items:center; height:30px; padding:0 10px; font-size:var(--workspace-font-size); font-weight:600; letter-spacing:0; text-transform:none; color:var(--muted-foreground); }
+.conversation { height:100%; min-height:0; display:flex; flex-direction:column; }
+.prompt-model-menu-title { padding:6px 10px 8px; font-size:var(--workspace-font-size); color:var(--muted-foreground); }
+[role=dialog] > .stack { padding:24px; }
+.stack { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.grow { flex:1; }
+.muted { color:var(--muted-foreground); font-size:var(--workspace-meta-size); line-height:1.65; }
+.loading-state { padding:32px; color:var(--muted-foreground); }
+.desktop-macos .sidebar-brand { padding-left:76px; }
+
+/* Full-height columns follow the user's current screenshots. */
+:root { --chat-column-width:48rem; }
+.library-icon { width:18px; height:18px; flex-shrink:0; display:block; object-fit:contain; }
+.dark .library-icon { filter:invert(.7); }
+.workspace-main { display:flex; min-width:0; }
+.sidebar-brand { height:40px; padding:0 6px; }
+.desktop-macos .sidebar-brand { padding-left:6px; }
+.sidebar-brand button { width:28px; height:28px; }
+.workspace-sidebar-header { gap:2px; padding:0 10px 8px; }
+.new-session-button { gap:10px; margin:4px 0; height:32px; }
+.sidebar-toolbar { justify-content:flex-start; gap:8px; padding:0 6px; }
+.sidebar-toolbar button { width:28px; height:28px; padding:4px; }
+.workspace-session-list { padding:8px 10px; gap:16px; }
+/* The library menu adds a 36px moving pill to every hovered list, including
+   parent project lists. Our 30px row surfaces own the highlight instead. */
+.workspace-session-list [data-slot=sidebar-menu-item] > .pointer-events-none { display:none; }
+/* Indent the text, not the row: project and session surfaces share both edges. */
+/* Both row types own the same surface; library buttons only render content. */
+[role=tooltip]:not(.session-summary-tooltip) { width:max-content; background:var(--foreground); color:var(--background); border-color:var(--foreground); font-size:var(--workspace-meta-size); font-weight:400; }
+/* The outer tab owns the shared surface, including its separate close button. */
+[data-atop-command-header] > kbd { display:none!important; }
+[data-atop-command-header] > input { min-width:0; }
+/* A native WebContentsView renders above DOM elements, including the handle. */
+
+/* Terminal grid and keyboard surface use the reference Ghostty engine. */
+
+/* Resizing is a composition of atop-ui Button, with layout-only pointer logic. */
+.workspace-resize-handle { transform:none!important; position:absolute; z-index:35; top:0; bottom:0; width:5px; min-width:5px; height:100%; min-height:0; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; touch-action:none; cursor:col-resize; }
+.workspace-sidebar { border-right-width:0; }
+/* Paint the divider and its hover state at the same edge. The transparent
+   five-pixel handle remains easy to grab without painting a second thick line. */
+.workspace-sidebar::after { content:""; position:absolute; z-index:34; top:0; bottom:0; width:1px; background:var(--border); pointer-events:none; }
+.workspace-sidebar::after { right:0; }
+.workspace-resize-handle::after { content:""; position:absolute; top:0; bottom:0; width:1px; background:transparent; pointer-events:none; }
+.workspace-resize-sidebar::after { right:0; }
+.workspace-resize-handle:hover,.workspace-resize-handle:focus-visible,.workspace-resize-handle.is-resizing { background:transparent; outline:none; box-shadow:none; }
+.workspace-resize-handle:hover::after,.workspace-resize-handle:focus-visible::after,.workspace-resize-handle.is-resizing::after { background:var(--border-strong); }
+.workspace-resize-sidebar { right:0; }
+html[data-atop-resizing] * { user-select:none!important; cursor:col-resize!important; }
+html[data-atop-resizing] iframe { pointer-events:none; }
+
+/* Keep the dock mounted so closing animates and open tabs retain their state. */
+
+/* Paint each heading/session separately: the library hover pill would span
+   an entire project item including all of its children. */
+.workspace-sidebar [data-slot=sidebar-menu-item] > .pointer-events-none.absolute { display:none; }
+/* Turn-owned outputs: actual registered artifacts and tool-recorded changes. */
+
+/* Live sizing stays in CSS/DOM, outside the React content tree. */
+[data-live-resize] { transition:none!important; }
+#workspace-project-sidebar[data-live-resize] { width:var(--sidebar-width)!important; }

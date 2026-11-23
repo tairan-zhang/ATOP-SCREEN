@@ -1,0 +1,36 @@
+Package: ATOPScreenEngine
+Type: Package
+Title: ATOP-SCREEN CRISPR Screening Analysis Engine
+Version: 0.1.2
+Authors@R: person("ATOP-SCREEN", role = c("aut", "cre"), email = "atop-screen@localhost")
+Description: Internal R package containing the canonical ATOP analysis
+    functions, GSEA helpers, plotting functions, and the optional C++17
+    permutation engine used by the Electron desktop application.
+License: GPL (>= 3)
+Encoding: UTF-8
+LazyData: true
+Imports:
+    clusterProfiler,
+    data.table,
+    digest,
+    dplyr,
+    fgsea,
+    ggplot2,
+    ggpubr,
+    ggrepel,
+    GseaVis,
+    jsonlite,
+    patchwork,
+    RColorBrewer,
+    ragg,
+    readxl,
+    Rcpp,
+    scales,
+    stringr,
+    svglite,
+    tidyr
+Suggests:
+    testthat (>= 3.0.0)
+LinkingTo:
+    Rcpp
+Config/testthat/edition: 3

@@ -1,0 +1,131 @@
+{
+  "name": "atop-screen-desktop",
+  "version": "0.1.3",
+  "description": "ATOP SCREEN desktop workspace for CRISPR screen analysis",
+  "author": "ATOP SCREEN",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@10.9.2",
+  "engines": {
+    "node": ">=22.12",
+    "npm": ">=10 <11"
+  },
+  "main": "electron/main/index.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"npm run web\" \"wait-on http://127.0.0.1:5173 && ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron electron/main/index.cjs\"",
+    "web": "npm --prefix web run dev -- --port 5173 --strictPort",
+    "typecheck": "npm --prefix web run typecheck",
+    "build:ui": "npm --prefix web run build",
+    "build": "npm run build:ui",
+    "start": "electron .",
+    "test": "node --test electron/**/*.test.cjs && vitest run web/src",
+    "verify": "npm run typecheck && npm test && npm run build",
+    "package:dir": "npm run build:ui && electron-builder --dir",
+    "package:mac": "npm run build:ui && electron-builder --mac dmg --arm64",
+    "lint": "npm run typecheck",
+    "postinstall": "npm ci --prefix web --no-audit --no-fund"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "concurrently": "9.2.4",
+    "electron": "28.3.3",
+    "electron-builder": "24.13.3",
+    "vitest": "3.2.7",
+    "wait-on": "8.0.5"
+  },
+  "build": {
+    "appId": "org.atopscreen.desktop",
+    "productName": "ATOP SCREEN",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!electron/**/*.test.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "packages/analysis-engine",
+        "to": "atop/analysis",
+        "filter": [
+          "DESCRIPTION",
+          "NAMESPACE",
+          "LICENSE",
+          "README.md",
+          "R/**/*",
+          "inst/**/*",
+          "!**/.DS_Store",
+          "LICENSE-NCS",
+          "src/ncs.hpp",
+          "src/cpp_permutation_engine.cpp"
+        ]
+      },
+      {
+        "from": "renv.lock",
+        "to": "atop/renv.lock"
+      }
+    ],
+    "mac": {
+      "icon": "packaging/icons/ATOP_black.icns",
+      "category": "public.app-category.science",
+      "target": [
+        "dmg"
+      ],
+      "extraResources": [
+        {
+          "from": "packaging/runtime/macos-arm64/runtime",
+          "to": "atop/runtime",
+          "filter": [
+            "**/*",
+            "!**/__pycache__/**",
+            "!**/*.pyc",
+            "!**/*.pyo",
+            "!**/.DS_Store",
+            "!**/*.dSYM/**",
+            "!**/tests/**"
+          ]
+        },
+        {
+          "from": "packaging/runtime/macos-arm64/analysis/lib",
+          "to": "atop/analysis/lib",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "packaging/runtime/macos-arm64/mageck",
+          "to": "atop/mageck",
+          "filter": [
+            "**/*",
+            "!**/__pycache__/**",
+            "!**/*.pyc"
+          ]
+        }
+      ],
+      "artifactName": "ATOP-SCREEN-${version}-macos-arm64.${ext}"
+    },
+    "dmg": {
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 130,
+          "y": 180,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "directories": {
+      "output": "release/0.1.3"
+    },
+    "afterPack": "scripts/after-pack.cjs"
+  }
+}

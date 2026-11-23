@@ -1,0 +1,22 @@
+{
+  "ncs_bins": "NCS bin \u00b7 whiskers show min\u2013max",
+  "ncs_component_score": "Component score",
+  "ncs_components": "Components by NCS bin",
+  "ncs_density": "NCS distribution",
+  "ncs_density_axis": "Density",
+  "ncs_dir": "Direction",
+  "ncs_displayed": "Points shown",
+  "ncs_mag": "Magnitude",
+  "ncs_median": "Median",
+  "ncs_negative": "Negative",
+  "ncs_positive": "Positive",
+  "ncs_removal": "sgRNA removal by threshold",
+  "ncs_removed": "Removed",
+  "ncs_removed_percent": "sgRNAs removed (%)",
+  "ncs_scatter": "NCS and effect size",
+  "ncs_signal": "Gene score sensitivity",
+  "ncs_signal_axis": "Score magnitude / unfiltered baseline (%)",
+  "ncs_stab": "Stability",
+  "ncs_threshold": "NCS cutoff",
+  "ncs_trend": "Binned mean trend"
+}

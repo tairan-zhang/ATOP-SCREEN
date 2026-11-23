@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin-arm64",
+  "rVersion": "4.6.1",
+  "bioconductorVersion": "3.23",
+  "gseaVisSource": "xpf10/GseaVis@1678cfbafe4388b40d9111299e5644b9454b95d4",
+  "gseaVisCommit": "1678cfbafe4388b40d9111299e5644b9454b95d4",
+  "runtimeRoot": "packaging/runtime/macos-arm64/runtime/R.framework/Versions/4.6",
+  "libraryPath": "Resources/library",
+  "cppEngineLibrary": "packaging/runtime/macos-arm64/analysis/lib/atop_permutation_engine.so",
+  "directPackages": [
+    "GseaVis",
+    "RColorBrewer",
+    "Rcpp",
+    "clusterProfiler",
+    "data.table",
+    "digest",
+    "dplyr",
+    "fgsea",
+    "ggplot2",
+    "ggpubr",
+    "ggrepel",
+    "jsonlite",
+    "patchwork",
+    "ragg",
+    "readxl",
+    "scales",
+    "stringr",
+    "svglite",
+    "tidyr"
+  ],
+  "retainedCapabilities": [
+    "original-atop-analysis",
+    "guide-level-ncs",
+    "precompiled-cpp-permutation-engine",
+    "clusterprofiler-gsea",
+    "gseavis-running-plots",
+    "svg-png-pdf-export",
+    "xlsx-import"
+  ],
+  "prune": {
+    "removeRCoreTests": true,
+    "removeDebugSymbols": true,
+    "removePackageDocumentation": false,
+    "removePaths": [
+      "Resources/library/cli/examples/apps"
+    ]
+  },
+  "rLockfile": "renv.lock",
+  "mageck": {
+    "version": "0.5.9.5",
+    "condaLock": "packaging/locks/mageck-osx-arm64.txt",
+    "build": "py311h1457a19_8",
+    "mode": "test (RRA)"
+  }
+}

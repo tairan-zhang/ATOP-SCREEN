@@ -1,0 +1,1 @@
+{"id": "fitness-example", "command": "process_data", "path": "/work/example-counts.tsv", "artifactDir": "/work/output", "parameters": {"gRNA_col": "guide", "gene_col": "gene", "condition1_replicate_cols": ["E1", "E2", "E3"], "condition2_replicate_cols": ["T0"], "comparison_mode": "shared_baseline", "N_perm": 101, "permutation_seed": 42, "ncs_threshold": 0.1, "run_mageck": true}}

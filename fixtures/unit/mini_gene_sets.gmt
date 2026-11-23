@@ -1,0 +1,2 @@
+SCREEN_POSITIVE	Minimal positive screen pathway	GENE_A	GENE_B
+SCREEN_NEGATIVE	Minimal negative screen pathway	GENE_B	GENE_A
