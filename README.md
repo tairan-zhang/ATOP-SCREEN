@@ -21,4 +21,4 @@ Desktop **0.1.3** includes the **0.1.2** analysis engine, R **4.6.1**, Bioconduc
 
 ## Source and licensing
 
-The [R/C++ analysis engine](packages/analysis-engine), [Electron desktop process](electron) and [React interface](web/src) are included here. The engine declares GPL-3.0-or-later, and the desktop code carries its MIT notice. Third-party components retain their own notices. [GPL license](LICENSE) · [Desktop license](LICENSE-desktop)
+The [R/C++ analysis engine](packages/analysis-engine) is licensed under GPL-3.0-or-later. The Electron and React desktop code retains its MIT license. Third-party components retain their respective licenses. [Project license](LICENSE) · [Desktop MIT notice](docs/licenses/desktop-MIT.txt)
