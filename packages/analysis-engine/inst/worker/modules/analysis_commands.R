@@ -79,7 +79,7 @@ process_data <- function(request) {
     result$params$run_mageck <- with_mageck
     result$params$mageck <- mageck$settings
     result$params$r_version <- as.character(getRversion())
-    result$params$software_version <- "0.1.2"
+    result$params$software_version <- read.dcf(file.path(analysis_root, "DESCRIPTION"), fields = "Version")[[1L]]
     result$params$input_sha256 <- digest::digest(file = request$path, algo = "sha256", serialize = FALSE)
     lock_path <- if (file.exists(file.path(runtime_root, "renv.lock"))) file.path(runtime_root, "renv.lock") else file.path(analysis_root, "..", "..", "renv.lock")
     if (file.exists(lock_path)) result$params$renv_lock_sha256 <- digest::digest(file = lock_path, algo = "sha256", serialize = FALSE)

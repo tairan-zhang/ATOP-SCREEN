@@ -35,19 +35,19 @@ Top‑N 固定为向上取整的 2/3。设置记录同时给出公式和数值�
 容器运行分析引擎，通过 JSONL 读取任务。宿主机需要可运行 Linux 容器的 Docker。Windows 使用 Docker Desktop 的 Linux containers 模式。先按[构建说明](DEVELOPMENT.md#locked-r-sources)下载并解包锁定的 R 源码归档，在仓库根目录运行下列命令构建镜像。构建会恢复 R 库、编译原生引擎，并运行合成计数矩阵回归测试。首次构建需要联网下载基础镜像和系统包。R 源码包随容器构建包提供，逐包校验 SHA‑256 后按锁文件中的依赖顺序安装。
 
 ```sh
-docker build -t atop-screen:0.1.2 .
+docker build -t atop-screen:0.1.3 .
 ```
 
 下面的示例使用一条起始列与三条终点列，同时运行 MAGeCK。以源码根目录为当前目录，在 Linux 或 macOS 运行：
 
 ```sh
-docker run --rm -i -v "$PWD/packaging/container:/work" atop-screen:0.1.2 < packaging/container/example-request.jsonl > result.jsonl
+docker run --rm -i -v "$PWD/packaging/container:/work" atop-screen:0.1.3 < packaging/container/example-request.jsonl > result.jsonl
 ```
 
 Windows PowerShell：
 
 ```powershell
-Get-Content -Raw .\packaging\container\example-request.jsonl | docker run --rm -i --mount "type=bind,source=$((Resolve-Path .\packaging\container).Path),target=/work" atop-screen:0.1.2 | Out-File -Encoding utf8 result.jsonl
+Get-Content -Raw .\packaging\container\example-request.jsonl | docker run --rm -i --mount "type=bind,source=$((Resolve-Path .\packaging\container).Path),target=/work" atop-screen:0.1.3 | Out-File -Encoding utf8 result.jsonl
 ```
 
 标准输出包含进度消息和带任务 id 的结果行。成功行含 `ok: true`。设置文件、RDS 和 MAGeCK 原始表会保存在宿主机的 `packaging/container/output`。处理自己的数据时，用挂载目录内的文件替换示例，修改 JSON 中的列名和路径。每个任务应使用独立的 `artifactDir`。

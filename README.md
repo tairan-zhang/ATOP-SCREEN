@@ -17,7 +17,7 @@ Try the [small example count matrix](packaging/container/example-counts.tsv) wit
 
 ## Reproducing an analysis
 
-Desktop **0.1.3** includes the **0.1.2** analysis engine, R **4.6.1**, Bioconductor **3.23** and MAGeCK **0.5.9.5**. Project settings record the sample mapping, guide filters, Top-N rule, permutation count, seed, engine and input checksum. Keep these settings with the count matrix to reproduce a run. See the [R lockfile](renv.lock), [runtime manifest](packaging/runtime-manifest.json) and [developer build instructions](docs/DEVELOPMENT.md).
+ATOP-SCREEN **0.1.3** includes R **4.6.1**, Bioconductor **3.23** and MAGeCK **0.5.9.5**. Project settings record the sample mapping, guide filters, Top-N rule, permutation count, seed, engine and input checksum. Keep these settings with the count matrix to reproduce a run. See the [R lockfile](renv.lock), [runtime manifest](packaging/runtime-manifest.json) and [developer build instructions](docs/DEVELOPMENT.md).
 
 ## Source
 
