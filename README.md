@@ -19,6 +19,10 @@ Try the [small example count matrix](packaging/container/example-counts.tsv) wit
 
 Desktop **0.1.3** includes the **0.1.2** analysis engine, R **4.6.1**, Bioconductor **3.23** and MAGeCK **0.5.9.5**. Project settings record the sample mapping, guide filters, Top-N rule, permutation count, seed, engine and input checksum. Keep these settings with the count matrix to reproduce a run. See the [R lockfile](renv.lock), [runtime manifest](packaging/runtime-manifest.json) and [developer build instructions](docs/DEVELOPMENT.md).
 
-## Source and licensing
+## Source
 
-The [R/C++ analysis engine](packages/analysis-engine) is licensed under GPL-3.0-or-later. The Electron and React desktop code retains its MIT license. Third-party components retain their respective licenses. [Project license](LICENSE) · [Desktop MIT notice](docs/licenses/desktop-MIT.txt)
+[R/C++ analysis engine](packages/analysis-engine) · [Electron desktop process](electron) · [React interface](web/src)
+
+## License
+
+[GPL-3.0](LICENSE).
